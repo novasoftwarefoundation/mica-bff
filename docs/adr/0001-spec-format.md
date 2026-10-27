@@ -16,7 +16,7 @@ Split the spec into two problems (Melle, 2026-10-27):
 
 1. **Data model**: an Elixir DSL with macros. The macros define what a valid spec is, like an XSD for XML; the module that uses them (`MicaBff.Blocks`) is the spec, like the XML document.
    - `defblock` (now): a block the BFF sends and clients render.
-   - `defpage` (later): a page the BFF serves. Always a GET that returns a list of blocks. The DSL expands it to an endpoint, so generated code has one list of endpoints and one network client.
+   - `defpage` (later): a page the BFF serves. Always a GET that returns a list of blocks, at `/bff/page/<page>`: the path follows from the page name (`defpage :home` → `GET /bff/page/home`), singular because a request fetches one page. The DSL expands it to an endpoint, so generated code has one list of endpoints and one network client. These requests come from a separate BFF system in mica, not from the existing LiveView routes.
    - `defendpoint` (later): every other call (boot, form submission) with its method, path, request body and response.
 
    Page and endpoint stay separate concepts. A `kind: :page` next to `:get`/`:post` would mix how a request travels (method) with what it returns: a page is always a GET with blocks, and a form POST can also answer with blocks.
