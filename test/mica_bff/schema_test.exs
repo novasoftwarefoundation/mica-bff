@@ -4,12 +4,11 @@ defmodule MicaBff.SchemaTest do
   test "the block catalogue is plain data in declaration order" do
     assert MicaBff.Blocks.__schema__() == %{
              blocks: [
-               %{name: :section_header, fields: [%{name: :title, type: :string, required: true}]},
                %{
                  name: :section,
                  fields: [
                    %{name: :title, type: :string, required: true},
-                   %{name: :to, type: :string, required: true}
+                   %{name: :to, type: :string, required: false}
                  ]
                }
              ]

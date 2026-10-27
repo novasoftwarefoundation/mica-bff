@@ -6,7 +6,11 @@ Status: proposed, 2026-10-27
 
 The BFF builds pages out of blocks; the iOS app (later Android and web) renders them. Both sides are generated from one spec, so a change in the spec never waits for hand-written code on either side. The spec covers blocks now, and later pages and endpoints: where a client gets the BFF response for a page, and how forms are submitted.
 
-Old app versions stay installed, so the spec has to make compatibility checkable: additions never break a client, a client renders an unknown block type as a fallback block and ignores unknown properties.
+Old app versions stay installed while the spec keeps changing: new blocks, new properties, changed property types, removed properties. Every layer has its own way of staying robust (Melle, 2026-10-27), and there may be more:
+
+- **App block renderer**: always renders something useful when a block changes: a new type, a new property, a changed property type or a removed property.
+- **BFF engine, content negotiation**: the app tells the BFF which spec version it implements; the BFF can give it a different view model, with older blocks it can render.
+- **App**: update announcements, optional or forced.
 
 The board asked to research a schema format, with XSD-style contract validation as one candidate.
 
@@ -39,7 +43,7 @@ Split the spec into two problems (Melle, 2026-10-27):
    - An `:integer` prop is a JSON number without a fraction; a `:float` prop accepts any JSON number.
    - A destination such as `section.to` is a path (`/pool/1/marketplace`), resolved against the app's base URL for its environment. How client-only actions (log out) are expressed is decided with the first block that needs one.
 
-**Blocks have no children.** A page is a flat, ordered list of blocks; no block contains another block. A field holds a primitive, never a block, and the DSL rejects it at compile time. This keeps the generated decoding and the renderers flat, and an unknown block type only ever replaces itself with a fallback. Grouping (a section header followed by its sections) is expressed by order on the page. Nesting is revisited when a page needs it; the Pixel core set's typed children are the reference then.
+**Blocks have no children.** A page is a flat, ordered list of blocks; no block contains another block. A field holds a primitive, never a block, and the DSL rejects it at compile time. This keeps the generated decoding and the renderers flat, and an unknown block type only ever replaces itself with a fallback. The client knows nothing about grouping yet, so there is no header block: a `section` without `to` is a plain line of text. Nesting is revisited when a page needs it; the Pixel core set's typed children are the reference then.
 
 Nested data types (a `defmodel`, e.g. an image with url, width and height) are added when a block needs one.
 
@@ -52,6 +56,7 @@ The generators are Mix tasks in this repo. They read the block catalogue as plai
 - A field is deprecated before it is removed, and removed only after the minimum app version no longer reads it.
 - Unknown enum values map to a fallback that the enum declares, once enums exist.
 - The spec version is the git tag (`v0.1.0`, …). CI compares the block catalogue with the last tag and fails on a breaking change.
+- Every BFF request carries the spec version the app implements, so the BFF can answer with blocks that version can render (content negotiation; part of the protocol, `defpage`/`defendpoint`).
 
 ## Alternatives
 
