@@ -3,7 +3,7 @@ defmodule MicaBff.Blocks do
   The block spec: every block the BFF can send and every client can render.
   On the wire a block is `{"type": "section", "props": {...}}`.
   """
-  use MicaBff.Spec
+  use MicaBff.Schema
 
   defblock :section_header do
     field(:title, :string, required: true)
