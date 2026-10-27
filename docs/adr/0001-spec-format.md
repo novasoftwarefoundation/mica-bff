@@ -16,15 +16,17 @@ Split the spec into two problems (Melle, 2026-10-27):
 
 1. **Data model**: an Elixir DSL with macros. The macros define what a valid spec is, like an XSD for XML; the module that uses them (`MicaBff.Blocks`) is the spec, like the XML document.
    - `defblock` (now): a block the BFF sends and clients render.
-   - `defpage` (later): a place a client can navigate to. Always a GET that returns a list of blocks; something can point at it (`section.to`, deep links) and navigation rules apply to it. The DSL expands it to an endpoint, so generated code has one list of endpoints and one network client.
+   - `defpage` (later): a page the BFF serves. Always a GET that returns a list of blocks. The DSL expands it to an endpoint, so generated code has one list of endpoints and one network client.
    - `defendpoint` (later): every other call (boot, form submission) with its method, path, request body and response.
 
-   Page and endpoint stay separate concepts. A `kind: :page` next to `:get`/`:post` would mix how a request travels (method) with what it is for (navigation): a page is always a GET, and a form POST can also answer with blocks.
+   Page and endpoint stay separate concepts. A `kind: :page` next to `:get`/`:post` would mix how a request travels (method) with what it returns: a page is always a GET with blocks, and a form POST can also answer with blocks.
+
+   **Navigation belongs to the client, not the spec.** A block that opens something carries only the destination URL (`section.to`). The client's router (navigation rules, UC-SENSE-06) decides whether that URL opens a native page, a BFF page or a web page, and how it is presented. Moving a page between native, BFF and web changes no spec and no block. `defpage` lets the router recognise BFF URLs; nothing in the spec has to point at it.
 2. **Serialization**: JSON. A block is `{"type": "section", "props": {...}}`. Keys are snake_case; generators map them to each platform's naming.
 
 **Blocks have no children.** A page is a flat, ordered list of blocks; no block contains another block. A field holds a primitive, never a block, and the DSL rejects it at compile time. This keeps the generated decoding and the renderers flat, and an unknown block type only ever replaces itself with a fallback. Grouping (a section header followed by its sections) is expressed by order on the page. Nesting is revisited when a page needs it; the Pixel core set's typed children are the reference then.
 
-Nested data types (a `defmodel`, e.g. an image with url, width and height) are added when a block needs one. A link to a page is not one: `section.to` is a page path for now and becomes a checked reference to a `defpage`.
+Nested data types (a `defmodel`, e.g. an image with url, width and height) are added when a block needs one.
 
 The generators are Mix tasks in this repo. They read the spec as plain data (`__spec__/0`), not the source. CI regenerates the code and commits it to `mica` (server) and `next-ios` (client), so each repo keeps a reviewable diff and builds without depending on this repo.
 

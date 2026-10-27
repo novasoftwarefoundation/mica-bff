@@ -9,8 +9,9 @@ defmodule MicaBff.Blocks do
     field(:title, :string, required: true)
   end
 
-  # A line of text with a chevron; tapping it opens the page at `to`.
-  # ponytail: plain path for now; becomes a checked page reference once defpage exists.
+  # A line of text with a chevron; tapping it opens `to`.
+  # `to` is the URL of the destination. The client's router decides what opens it
+  # (native page, BFF page or web page) and how it is presented.
   defblock :section do
     field(:title, :string, required: true)
     field(:to, :string, required: true)
