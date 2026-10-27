@@ -14,10 +14,17 @@ The board asked to research a schema format, with XSD-style contract validation 
 
 Split the spec into two problems (Melle, 2026-10-27):
 
-1. **Data model** (blocks, later pages and endpoints): an Elixir DSL with macros, `defblock` and `defmodel` now, `defpage`/`defendpoint` later. The macros define what a valid spec is, like an XSD for XML; the module that uses them (`MicaBff.Blocks`) is the spec, like the XML document.
+1. **Data model**: an Elixir DSL with macros. The macros define what a valid spec is, like an XSD for XML; the module that uses them (`MicaBff.Blocks`) is the spec, like the XML document.
+   - `defblock` (now): a block the BFF sends and clients render.
+   - `defpage` (later): a place a client can navigate to. Always a GET that returns a list of blocks; something can point at it (`section.to`, deep links) and navigation rules apply to it. The DSL expands it to an endpoint, so generated code has one list of endpoints and one network client.
+   - `defendpoint` (later): every other call (boot, form submission) with its method, path, request body and response.
+
+   Page and endpoint stay separate concepts. A `kind: :page` next to `:get`/`:post` would mix how a request travels (method) with what it is for (navigation): a page is always a GET, and a form POST can also answer with blocks.
 2. **Serialization**: JSON. A block is `{"type": "section", "props": {...}}`. Keys are snake_case; generators map them to each platform's naming.
 
-**Blocks have no children.** A page is a flat, ordered list of blocks; no block contains another block. A field holds a primitive or a model (plain nested data such as `link`), never a block, and the DSL rejects it at compile time. This keeps the generated decoding and the renderers flat, and an unknown block type only ever replaces itself with a fallback. Grouping (a section header followed by its sections) is expressed by order on the page. Nesting is revisited when a page needs it; the Pixel core set's typed children are the reference then.
+**Blocks have no children.** A page is a flat, ordered list of blocks; no block contains another block. A field holds a primitive, never a block, and the DSL rejects it at compile time. This keeps the generated decoding and the renderers flat, and an unknown block type only ever replaces itself with a fallback. Grouping (a section header followed by its sections) is expressed by order on the page. Nesting is revisited when a page needs it; the Pixel core set's typed children are the reference then.
+
+Nested data types (a `defmodel`, e.g. an image with url, width and height) are added when a block needs one. A link to a page is not one: `section.to` is a page path for now and becomes a checked reference to a `defpage`.
 
 The generators are Mix tasks in this repo. They read the spec as plain data (`__spec__/0`), not the source. CI regenerates the code and commits it to `mica` (server) and `next-ios` (client), so each repo keeps a reviewable diff and builds without depending on this repo.
 

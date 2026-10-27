@@ -5,19 +5,14 @@ defmodule MicaBff.Blocks do
   """
   use MicaBff.Spec
 
-  defmodel :link do
-    # Path of the page to open, e.g. "/assignment/12". How it is presented
-    # (tab, over the tabs, external) is up to the client's navigation rules.
-    field(:to, :string, required: true)
-  end
-
   defblock :section_header do
     field(:title, :string, required: true)
   end
 
-  # A line of text with a chevron; tapping it opens `link`.
+  # A line of text with a chevron; tapping it opens the page at `to`.
+  # ponytail: plain path for now; becomes a checked page reference once defpage exists.
   defblock :section do
     field(:title, :string, required: true)
-    field(:link, :link, required: true)
+    field(:to, :string, required: true)
   end
 end
