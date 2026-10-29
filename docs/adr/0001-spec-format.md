@@ -1,6 +1,6 @@
 # 0001: Spec format: Elixir DSL for the schema, JSON on the wire
 
-Status: proposed, 2026-10-27
+Status: accepted, 2026-10-27 (approved by Melle in mica-bff#1)
 
 ## Context
 
