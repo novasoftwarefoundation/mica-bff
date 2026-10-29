@@ -51,7 +51,8 @@ The generators are Mix tasks in this repo. They read the block catalogue as plai
 
 ### Compatibility
 
-- The client renders an unknown block type as a fallback block. A known block that fails to decode (for example, a required prop is missing) is treated the same way: that block becomes a fallback, the rest of the page renders.
+- The client renders an unknown block type as a fallback block. A known block that fails to decode (for example, a required prop is missing or has the wrong type) is treated the same way: that block becomes a fallback, the rest of the page renders.
+- An optional prop that fails to decode (for example, its type changed) is treated as missing: the block still renders without it.
 - New blocks and new optional props can be added at any time. A new field on an existing block is always optional, so an older server or a cached page still decodes in a newer client.
 - A field is deprecated before it is removed, and removed only after the minimum app version no longer reads it.
 - Unknown enum values map to a fallback that the enum declares, once enums exist.

@@ -3,9 +3,9 @@ defmodule MicaBff.Gen.SwiftTest do
 
   @moduletag :tmp_dir
 
-  test "block names that clash with the generated enum are refused" do
-    for name <- [:block, :unknown] do
-      assert_raise ArgumentError, ~r/clashes with the generated Swift Block enum/, fn ->
+  test "block names Swift or the generated code reserve are refused" do
+    for name <- [:block, :unknown, :self, :type, :protocol, :any] do
+      assert_raise ArgumentError, ~r/is reserved by Swift or the generated code/, fn ->
         MicaBff.Gen.Swift.generate(%{blocks: [%{name: name, fields: []}]}, "BFF")
       end
     end
@@ -29,6 +29,8 @@ defmodule MicaBff.Gen.SwiftTest do
               BFF.Block.section(.init(title: "A", to: nil))),
         check("unknown keys", #"{"type": "section", "id": 1, "props": {"title": "A", "icon": "x"}}"#,
               BFF.Block.section(.init(title: "A", to: nil))),
+        check("wrong type for an optional prop", #"{"type": "section", "props": {"title": "Studies", "to": 5}}"#,
+              BFF.Block.section(.init(title: "Studies", to: nil))),
         check("page", #"[{"type": "section", "props": {"title": "A"}}, {"type": "carousel", "props": {}}, {"type": "section", "props": {}}, {"type": "section", "props": {"title": 1}}, null, {"type": 3}]"#,
               [BFF.Block.section(.init(title: "A", to: nil)), .unknown(type: "carousel"),
               .unknown(type: "section"), .unknown(type: "section"), .unknown(type: ""),
@@ -38,7 +40,8 @@ defmodule MicaBff.Gen.SwiftTest do
   end
 
   @tag :swift
-  test "snake_case names, keywords and every primitive type", %{tmp_dir: dir} do
+  test "snake_case names, keywords, every primitive type, and blocks named after Swift types",
+       %{tmp_dir: dir} do
     schema = %{
       blocks: [
         %{
@@ -50,7 +53,10 @@ defmodule MicaBff.Gen.SwiftTest do
             %{name: :ratio, type: :float, required: false},
             %{name: :active, type: :boolean, required: false}
           ]
-        }
+        },
+        # Without qualified names these would shadow Swift.Bool and Swift.Decoder.
+        %{name: :bool, fields: [%{name: :x, type: :string, required: true}]},
+        %{name: :decoder, fields: [%{name: :x, type: :string, required: true}]}
       ]
     }
 
@@ -58,8 +64,12 @@ defmodule MicaBff.Gen.SwiftTest do
     [
         check("all props", #"{"type": "row_item", "props": {"default": "x", "sub_title": "y", "count": 3, "ratio": 1, "active": true}}"#,
               BFF.Block.rowItem(.init(default: "x", subTitle: "y", count: 3, ratio: 1, active: true))),
-        check("fraction for an integer", #"{"type": "row_item", "props": {"default": "x", "count": 1.5}}"#,
+        check("fraction for an optional integer", #"{"type": "row_item", "props": {"default": "x", "count": 1.5}}"#,
+              BFF.Block.rowItem(.init(default: "x", subTitle: nil, count: nil, ratio: nil, active: nil))),
+        check("wrong type for a required prop", #"{"type": "row_item", "props": {"default": 1}}"#,
               BFF.Block.unknown(type: "row_item")),
+        check("block named bool", #"{"type": "bool", "props": {"x": "y"}}"#, BFF.Block.bool(.init(x: "y"))),
+        check("block named decoder", #"{"type": "decoder", "props": {"x": "y"}}"#, BFF.Block.decoder(.init(x: "y"))),
     ]
     """)
   end

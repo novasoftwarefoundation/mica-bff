@@ -1,0 +1,53 @@
+<%= @header %>
+
+enum <%= @namespace %> {}
+
+extension <%= @namespace %> {
+    /// One block on a BFF page. Decoding never fails: a type this app doesn't
+    /// know, or a known block whose required props don't decode, becomes `.unknown`.
+    enum Block: Swift.Decodable, Swift.Equatable, Swift.Sendable {
+<%= for block <- @blocks do %>        case <%= block.case %>(<%= block.type %>)
+<% end %>        case unknown(type: Swift.String)
+
+        private enum CodingKeys: Swift.String, Swift.CodingKey {
+            case type, props
+        }
+
+        init(from decoder: any Swift.Decoder) throws {
+            guard let container = try? decoder.container(keyedBy: CodingKeys.self),
+                  let type = try? container.decode(Swift.String.self, forKey: .type)
+            else {
+                self = .unknown(type: "")
+                return
+            }
+            switch type {
+<%= for block <- @blocks do %>            case "<%= block.name %>":
+                self = (try? container.decode(<%= block.type %>.self, forKey: .props))
+                    .map(Block.<%= block.case %>) ?? .unknown(type: type)
+<% end %>            default:
+                self = .unknown(type: type)
+            }
+        }
+    }
+<%= for block <- @blocks do %>
+    /// Block `<%= block.name %>`.
+    struct <%= block.type %>: Swift.Decodable, Swift.Equatable, Swift.Sendable {
+<%= for field <- block.fields do %>        let <%= field.ident %>: <%= field.swift_type %><%= if field.required, do: "", else: "?" %>
+<% end %><%= if block.fields != [] do %>
+        private enum CodingKeys: Swift.String, Swift.CodingKey {
+<%= for field <- block.fields do %>            case <%= field.key %>
+<% end %>        }
+<% end %>    }
+<% end %>}
+<%= for block <- @blocks, block.fields != [] do %>
+// Required props must decode; an optional prop that doesn't decode (e.g. a changed
+// type) becomes nil, so the block still renders (ADR 0001). In an extension, so the
+// memberwise initializer stays available.
+extension <%= @namespace %>.<%= block.type %> {
+    init(from decoder: any Swift.Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+<%= for field <- block.fields do %><%= if field.required do %>        self.<%= field.ident %> = try container.decode(<%= field.swift_type %>.self, forKey: .<%= field.ident %>)
+<% else %>        self.<%= field.ident %> = try? container.decodeIfPresent(<%= field.swift_type %>.self, forKey: .<%= field.ident %>)
+<% end %><% end %>    }
+}
+<% end %>
