@@ -19,20 +19,22 @@ defmodule MicaBff.Gen.SwiftTest do
   } do
     tappable = "fixtures/section_tappable.json" |> File.read!() |> String.trim()
     plain = "fixtures/section_plain.json" |> File.read!() |> String.trim()
+    body = "fixtures/section_body.json" |> File.read!() |> String.trim()
 
     run_swift!(dir, MicaBff.Blocks.__schema__(), """
     [
         check("tappable", #"#{tappable}"#,
-              BFF.Block.section(.init(title: "Available studies", to: "/pool/1/marketplace"))),
-        check("plain", #"#{plain}"#, BFF.Block.section(.init(title: "Studies", to: nil))),
+              BFF.Block.section(.init(title: "Available studies", body: "Studies you can take part in right now.", to: "/pool/1/marketplace"))),
+        check("plain", #"#{plain}"#, BFF.Block.section(.init(title: "Studies", body: nil, to: nil))),
+        check("body only", #"#{body}"#, BFF.Block.section(.init(title: nil, body: "You have no open studies.", to: nil))),
         check("null prop", #"{"type": "section", "props": {"title": "A", "to": null}}"#,
-              BFF.Block.section(.init(title: "A", to: nil))),
+              BFF.Block.section(.init(title: "A", body: nil, to: nil))),
         check("unknown keys", #"{"type": "section", "id": 1, "props": {"title": "A", "icon": "x"}}"#,
-              BFF.Block.section(.init(title: "A", to: nil))),
+              BFF.Block.section(.init(title: "A", body: nil, to: nil))),
         check("wrong type for an optional prop", #"{"type": "section", "props": {"title": "Studies", "to": 5}}"#,
-              BFF.Block.section(.init(title: "Studies", to: nil))),
-        check("page", #"[{"type": "section", "props": {"title": "A"}}, {"type": "carousel", "props": {}}, {"type": "section", "props": {}}, {"type": "section", "props": {"title": 1}}, null, {"type": 3}]"#,
-              [BFF.Block.section(.init(title: "A", to: nil)), .unknown(type: "carousel"),
+              BFF.Block.section(.init(title: "Studies", body: nil, to: nil))),
+        check("page", #"[{"type": "section", "props": {"title": "A"}}, {"type": "carousel", "props": {}}, {"type": "section"}, {"type": "section", "props": 1}, null, {"type": 3}]"#,
+              [BFF.Block.section(.init(title: "A", body: nil, to: nil)), .unknown(type: "carousel"),
               .unknown(type: "section"), .unknown(type: "section"), .unknown(type: ""),
               .unknown(type: "")]),
     ]

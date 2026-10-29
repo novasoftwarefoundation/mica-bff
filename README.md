@@ -9,7 +9,7 @@ The spec for the Mica backend for frontend (BFF): the blocks the server sends an
 - `fixtures/`: example payloads; generated code must encode and decode them exactly
 - `docs/adr/`: decisions, starting with [0001: spec format](docs/adr/0001-spec-format.md)
 
-Blocks travel as JSON: `{"type": "section", "props": {"title": "...", "to": "/..."}}`.
+Blocks travel as JSON: `{"type": "section", "props": {"title": "...", "body": "...", "to": "/..."}}`.
 
 ```sh
 mix test   # the Swift tests need swiftc; without it they are skipped locally, never in CI
