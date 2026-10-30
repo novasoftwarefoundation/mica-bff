@@ -7,7 +7,8 @@ defmodule MicaBff.SchemaTest do
                %{
                  name: :section,
                  fields: [
-                   %{name: :title, type: :string, required: true},
+                   %{name: :title, type: :string, required: false},
+                   %{name: :body, type: :string, required: false},
                    %{name: :to, type: :string, required: false}
                  ]
                }

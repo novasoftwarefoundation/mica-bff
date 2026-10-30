@@ -4,13 +4,13 @@ defmodule MicaBff.Gen.ElixirTest do
   setup_all do
     namespace = "MicaBffTest.Gen#{System.unique_integer([:positive])}"
 
-    for {_file, source} <- MicaBff.Gen.Elixir.render(MicaBff.Blocks.__schema__(), namespace),
+    for {_file, source} <- MicaBff.Gen.Elixir.generate(MicaBff.Blocks.__schema__(), namespace),
         do: Code.compile_string(source)
 
     %{namespace: namespace}
   end
 
-  # section_plain has no `to`, so this also checks that empty optional props are left out.
+  # Every section prop is optional, so the fixtures also check that nil props are left out.
   test "every fixture encodes back to itself through its generated module", %{namespace: ns} do
     for path <- Path.wildcard("fixtures/*.json") do
       %{"type" => type, "props" => props} = fixture = path |> File.read!() |> JSON.decode!()
@@ -21,9 +21,15 @@ defmodule MicaBff.Gen.ElixirTest do
     end
   end
 
-  test "required fields are enforced", %{namespace: ns} do
-    assert_raise ArgumentError, ~r/:title/, fn ->
-      struct!(Module.concat(ns, Section), to: "/pool/1/marketplace")
-    end
+  test "required fields are enforced" do
+    schema = %{
+      blocks: [%{name: :badge, fields: [%{name: :label, type: :string, required: true}]}]
+    }
+
+    ns = "MicaBffTest.Required#{System.unique_integer([:positive])}"
+    [{_file, source}] = MicaBff.Gen.Elixir.generate(schema, ns)
+    [{badge, _}] = Code.compile_string(source)
+
+    assert_raise ArgumentError, ~r/:label/, fn -> struct!(badge, []) end
   end
 end

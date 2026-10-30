@@ -38,7 +38,7 @@ Split the spec into two problems (Melle, 2026-10-27):
    **Navigation belongs to the client, not the spec.** A block that opens something carries only the destination (`section.to`). The client's router (navigation rules, UC-SENSE-06) decides whether it opens a native page, a BFF page or a web page, and how it is presented. Moving a page between native, BFF and web changes no spec and no block. `defpage` lets the router recognise BFF URLs; nothing in the spec has to point at it.
 2. **Serialization**: JSON, with these rules:
    - A block is `{"type": "section", "props": {...}}`. Type and prop names are the snake_case names from the schema; generators map them to each platform's naming.
-   - An optional prop without a value is left out by the BFF. Clients treat a missing prop and `null` the same.
+   - An optional prop that is `nil` is left out by the BFF; `""`, `0`, `false` and empty lists or maps are values and are sent. Clients treat a missing prop and `null` the same.
    - Clients ignore unknown keys, both next to `type`/`props` and inside `props`.
    - An `:integer` prop is a JSON number without a fraction; a `:float` prop accepts any JSON number.
    - A destination such as `section.to` is a path (`/pool/1/marketplace`), resolved against the app's base URL for its environment. How client-only actions (log out) are expressed is decided with the first block that needs one.
@@ -51,7 +51,8 @@ The generators are Mix tasks in this repo. They read the block catalogue as plai
 
 ### Compatibility
 
-- The client renders an unknown block type as a fallback block. A known block that fails to decode (for example, a required prop is missing) is treated the same way: that block becomes a fallback, the rest of the page renders.
+- The client renders an unknown block type as a fallback block. A known block that fails to decode (for example, a required prop is missing or has the wrong type) is treated the same way: that block becomes a fallback, the rest of the page renders.
+- An optional prop that fails to decode (for example, its type changed) is treated as missing: the block still renders without it.
 - New blocks and new optional props can be added at any time. A new field on an existing block is always optional, so an older server or a cached page still decodes in a newer client.
 - A field is deprecated before it is removed, and removed only after the minimum app version no longer reads it.
 - Unknown enum values map to a fallback that the enum declares, once enums exist.
@@ -72,5 +73,5 @@ The generators are Mix tasks in this repo. They read the block catalogue as plai
 - One language for the spec, the generators and the server; generators get the full spec as data, without parsing a schema language.
 - A mistake in the spec fails at compile time and points at its line: an unknown type or option, a name that isn't a snake_case atom, a duplicate name, a block used as a field or named after a primitive, a `field` outside a `defblock`, a `defblock` inside another.
 - Payload validation is not built yet. A validator against `__schema__/0`, plus example payloads per block that the generated server and client code must encode and decode, is planned as the contract validation work. Until then the rules above are prose.
-- Editing the spec means editing Elixir, also for iOS developers. If that becomes a problem, a docs generator renders the spec as Markdown.
+- Editing the spec means editing Elixir, also for iOS developers. If that becomes a problem, a docs generator generates the spec as Markdown.
 - A consumer that needs a standard schema (Android tooling, external parties) gets one more generator that exports JSON Schema from the same data.
