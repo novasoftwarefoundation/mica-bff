@@ -1,7 +1,9 @@
 defmodule MicaBff.Gen.Swift do
+  @default_namespace "BFF"
+
   @moduledoc """
   Generates one Swift file with the block catalogue as `Decodable` types under a
-  namespace (default `BFF`; SwiftUI already has a `Section`). One file, because
+  namespace (default `#{@default_namespace}`; SwiftUI already has a `Section`). One file, because
   the next-ios Xcode project lists every file: it is added once, and new blocks
   only change its content. The Swift itself is in `swift.swift.eex`.
 
@@ -34,13 +36,16 @@ defmodule MicaBff.Gen.Swift do
                fallthrough for guard if in repeat return throw switch where while as false is nil
                self super throws true try)
   # Block names the generated code needs itself, or that Swift reserves as type names.
-  @reserved_blocks [:block, :unknown, :self, :type, :protocol, :any]
+  # `swift` would shadow the Swift module; `coding_keys` the private CodingKeys in Block.
+  @reserved_blocks [:block, :unknown, :self, :type, :protocol, :any, :swift, :coding_keys]
 
-  EEx.function_from_file(:defp, :render, Path.join(__DIR__, "swift.swift.eex"), [:assigns])
+  EEx.function_from_file(:defp, :template, Path.join(__DIR__, "swift.swift.eex"), [:assigns])
+
+  def default_namespace, do: @default_namespace
 
   @doc "Returns the Swift source for the block catalogue."
   @spec generate(map, String.t()) :: String.t()
-  def generate(%{blocks: blocks}, namespace) do
+  def generate(%{blocks: blocks}, namespace \\ @default_namespace) do
     for %{name: name} <- blocks, name in @reserved_blocks do
       raise ArgumentError,
             "block #{inspect(name)} can't be generated in Swift: " <>
@@ -48,7 +53,7 @@ defmodule MicaBff.Gen.Swift do
     end
 
     [header: @header, namespace: namespace, blocks: Enum.map(blocks, &block/1)]
-    |> render()
+    |> template()
     |> String.trim_trailing()
     |> Kernel.<>("\n")
   end

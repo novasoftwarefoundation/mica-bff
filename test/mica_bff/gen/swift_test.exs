@@ -4,7 +4,7 @@ defmodule MicaBff.Gen.SwiftTest do
   @moduletag :tmp_dir
 
   test "block names Swift or the generated code reserve are refused" do
-    for name <- [:block, :unknown, :self, :type, :protocol, :any] do
+    for name <- [:block, :unknown, :self, :type, :protocol, :any, :swift, :coding_keys] do
       assert_raise ArgumentError, ~r/is reserved by Swift or the generated code/, fn ->
         MicaBff.Gen.Swift.generate(%{blocks: [%{name: name, fields: []}]}, "BFF")
       end

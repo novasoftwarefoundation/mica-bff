@@ -4,7 +4,7 @@ defmodule MicaBff.Gen.ElixirTest do
   setup_all do
     namespace = "MicaBffTest.Gen#{System.unique_integer([:positive])}"
 
-    for {_file, source} <- MicaBff.Gen.Elixir.render(MicaBff.Blocks.__schema__(), namespace),
+    for {_file, source} <- MicaBff.Gen.Elixir.generate(MicaBff.Blocks.__schema__(), namespace),
         do: Code.compile_string(source)
 
     %{namespace: namespace}
@@ -27,7 +27,7 @@ defmodule MicaBff.Gen.ElixirTest do
     }
 
     ns = "MicaBffTest.Required#{System.unique_integer([:positive])}"
-    [{_file, source}] = MicaBff.Gen.Elixir.render(schema, ns)
+    [{_file, source}] = MicaBff.Gen.Elixir.generate(schema, ns)
     [{badge, _}] = Code.compile_string(source)
 
     assert_raise ArgumentError, ~r/:label/, fn -> struct!(badge, []) end
