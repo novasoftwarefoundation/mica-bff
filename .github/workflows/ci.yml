@@ -6,8 +6,36 @@ on:
   pull_request:
 
 jobs:
-  test:
+  # The DSL on its own, copied out of the repo as if it were its own repo.
+  dsl:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}/../dsl-alone
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          version-file: dsl/.tool-versions
+          version-type: strict
+      - run: cp -R dsl ../dsl-alone
+        working-directory: .
+      - name: The DSL knows no catalogue
+        run: |
+          if grep -rnE 'MicaBff\.|Systems\.BFF|next-ios|mono/|section' lib test; then
+            echo "::error::dsl/ refers to Mica's catalogue; take it from --spec, --namespace or config instead."
+            exit 1
+          fi
+      - run: mix compile --warnings-as-errors
+      - run: mix format --check-formatted
+      - run: mix test
+
+  # The block catalogue with the DSL as a path dependency.
+  spec:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: spec
     steps:
       - uses: actions/checkout@v4
       - uses: erlef/setup-beam@v1
@@ -16,4 +44,10 @@ jobs:
           version-type: strict
       - run: mix compile --warnings-as-errors
       - run: mix format --check-formatted
+      # Includes the check that the generated code is byte-identical to test/golden.
       - run: mix test
+      - name: The generators produce test/golden from the shell too
+        run: |
+          mix bff.gen.elixir --out "$RUNNER_TEMP/gen/elixir"
+          mix bff.gen.swift --out "$RUNNER_TEMP/gen/swift"
+          diff -r test/golden "$RUNNER_TEMP/gen"
