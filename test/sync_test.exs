@@ -61,6 +61,36 @@ defmodule MicaBff.SyncTest do
              :skipped
   end
 
+  # An older run's sync once joined the concurrency group, cancelled the newest run's running sync, and
+  # then skipped. GitHub decides which job runs, waits or is cancelled, so this checks the settings that
+  # keep an older run out of the group and the newest sync from being cancelled. No YAML parser among
+  # the deps: the sync job is the lines under `  sync:` up to the next job, without comments.
+  test "an older run can't cancel the newest sync" do
+    sync =
+      ".github/workflows/ci.yml"
+      |> File.read!()
+      |> String.split("\n")
+      |> Enum.drop_while(&(&1 != "  sync:"))
+      |> Enum.drop(1)
+      |> Enum.take_while(&(not String.match?(&1, ~r/^  \S/)))
+      |> Enum.reject(&String.match?(&1, ~r/^\s*#/))
+      |> Enum.join("\n")
+
+    missing =
+      for {setting, pattern} <- [
+            {"needs: tip", ~r/^    needs: (tip|\[.*\btip\b.*\])$/m},
+            {"if: needs.tip.outputs.latest == 'true'",
+             ~r/^    if: needs\.tip\.outputs\.latest == 'true'$/m},
+            {"concurrency: cancel-in-progress: false",
+             ~r/^    concurrency:\n(      .*\n)*      cancel-in-progress: false$/m},
+            {"timeout-minutes", ~r/^    timeout-minutes: \d+$/m}
+          ],
+          not (sync =~ pattern),
+          do: setting
+
+    assert missing == [], "the sync job in ci.yml lacks: #{Enum.join(missing, ", ")}"
+  end
+
   # The steps as ci.yml wires them: tip, then compare, then close when compare says so.
   # Returns :skipped, :nothing, :update or :closed (the sync branch is gone afterwards).
   defp sync(dir, opts) do
