@@ -59,10 +59,26 @@ jobs:
           token: ${{ steps.app.outputs.token }}
           path: target
       - run: mix ${{ matrix.task }} --out target/${{ matrix.out }}
+      # Runs reach the sync in the order their tests finish, and a re-run keeps its old commit:
+      # only the tip of main may sync, so older code never replaces newer code.
+      - name: Check that this commit is still the tip of main
+        id: tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          main=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [ "$main" = "$GITHUB_SHA" ]; then
+            echo "latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "main has moved past $GITHUB_SHA; its own run syncs it."
+          fi
       - name: Compare with the open sync PR, or else develop
         id: diff
+        if: steps.tip.outputs.latest == 'true'
         working-directory: target
         env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: eyra/${{ matrix.repo }}
           OUT: ${{ matrix.out }}
         run: |
           beyond_header() {
@@ -70,9 +86,13 @@ jobs:
           }
           git add -A
           if git fetch -q origin mica-bff/sync 2>/dev/null; then
+            # A branch without an open PR (a cancelled run, a PR closed by hand) is not a sync:
+            # compare with it only while its PR is open, else update so the PR opens again.
+            # head=eyra:… leaves out PRs from forks with the same branch name.
+            open=$(gh api "repos/$REPO/pulls?head=eyra:mica-bff/sync&state=open" --jq length)
             if ! beyond_header HEAD; then
               echo "close=true" >> "$GITHUB_OUTPUT"
-            elif beyond_header FETCH_HEAD; then
+            elif [ "$open" = 0 ] || beyond_header FETCH_HEAD; then
               echo "update=true" >> "$GITHUB_OUTPUT"
             fi
           elif beyond_header HEAD; then
@@ -85,7 +105,8 @@ jobs:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPO: eyra/${{ matrix.repo }}
         run: |
-          if [ "$(gh pr list -R "$REPO" --head mica-bff/sync --state open --json number --jq length)" != 0 ]; then
+          # Count same-repo PRs only: gh pr close finds a PR by branch name only in the repo itself, not in a fork.
+          if [ "$(gh api "repos/$REPO/pulls?head=eyra:mica-bff/sync&state=open" --jq length)" != 0 ]; then
             gh pr close mica-bff/sync -R "$REPO" --delete-branch --comment "mica-bff@${{ github.sha }} generates the same code as develop."
           else
             gh api -X DELETE "repos/$REPO/git/refs/heads/mica-bff/sync"
