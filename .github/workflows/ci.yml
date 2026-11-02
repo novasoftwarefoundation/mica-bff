@@ -44,6 +44,9 @@ jobs:
     needs: tip
     if: needs.tip.outputs.latest == 'true'
     runs-on: ubuntu-latest
+    # A sync takes under a minute; a hung one would otherwise hold the group below for 6 hours.
+    timeout-minutes: 15
+    # To re-run a sync, re-run the newest run's: an old run's sync can replace a newer pending one, then skip.
     concurrency:
       group: sync-${{ matrix.repo }}
       # Wait for a running sync: cancelling it between its branch push and its PR call leaves a branch without a PR.
