@@ -14,7 +14,8 @@ defmodule MicaBff.GenTest do
 
     Mix.Tasks.Bff.Gen.Elixir.run(["--out", dir])
 
-    assert dir |> File.ls!() |> Enum.sort() == ["helpers.ex", "section.ex"]
+    blocks = for %{name: name} <- MicaBff.Blocks.__schema__().blocks, do: "#{name}.ex"
+    assert dir |> File.ls!() |> Enum.sort() == Enum.sort(["helpers.ex" | blocks])
   end
 
   test "generated files name their origin and are recognised on a rerun", %{tmp_dir: dir} do

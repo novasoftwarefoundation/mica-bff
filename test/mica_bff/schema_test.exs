@@ -1,17 +1,23 @@
 defmodule MicaBff.SchemaTest do
   use ExUnit.Case, async: true
 
-  test "the block catalogue is plain data in declaration order" do
-    assert MicaBff.Blocks.__schema__() == %{
+  test "a schema is plain data in declaration order" do
+    [{module, _}] =
+      compile!("""
+      defblock :b do field :y, :integer, required: true; field :x, :string end
+      defblock :a do end
+      """)
+
+    assert module.__schema__() == %{
              blocks: [
                %{
-                 name: :section,
+                 name: :b,
                  fields: [
-                   %{name: :title, type: :string, required: false},
-                   %{name: :body, type: :string, required: false},
-                   %{name: :to, type: :string, required: false}
+                   %{name: :y, type: :integer, required: true},
+                   %{name: :x, type: :string, required: false}
                  ]
-               }
+               },
+               %{name: :a, fields: []}
              ]
            }
   end
