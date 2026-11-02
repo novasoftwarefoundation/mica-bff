@@ -63,18 +63,9 @@ defmodule MicaBff.SyncTest do
 
   # An older run's sync once joined the concurrency group, cancelled the newest run's running sync, and
   # then skipped. GitHub decides which job runs, waits or is cancelled, so this checks the settings that
-  # keep an older run out of the group and the newest sync from being cancelled. No YAML parser among
-  # the deps: the sync job is the lines under `  sync:` up to the next job, without comments.
+  # keep an older run out of the group and the newest sync from being cancelled.
   test "an older run can't cancel the newest sync" do
-    sync =
-      ".github/workflows/ci.yml"
-      |> File.read!()
-      |> String.split("\n")
-      |> Enum.drop_while(&(&1 != "  sync:"))
-      |> Enum.drop(1)
-      |> Enum.take_while(&(not String.match?(&1, ~r/^  \S/)))
-      |> Enum.reject(&String.match?(&1, ~r/^\s*#/))
-      |> Enum.join("\n")
+    sync = sync_job()
 
     missing =
       for {setting, pattern} <- [
@@ -89,6 +80,52 @@ defmodule MicaBff.SyncTest do
           do: setting
 
     assert missing == [], "the sync job in ci.yml lacks: #{Enum.join(missing, ", ")}"
+  end
+
+  # Re-running only an old run's sync job reuses the tip job's earlier answer; on main such a re-run
+  # closed the newer PR. So the job checks the tip again before it compares, and the steps after the
+  # compare act only on its outputs.
+  test "re-running only an old run's sync job doesn't sync" do
+    steps =
+      sync_job()
+      |> String.split("\n      - ")
+      |> Enum.drop(1)
+      |> Enum.map(&("        " <> &1))
+
+    found =
+      for {step, patterns} <- [
+            {"a step with id: tip that runs .github/sync.sh tip",
+             [~r/^        id: tip$/m, ~r/^        run: \.github\/sync\.sh tip$/m]},
+            {"the compare step (id: diff) with if: steps.tip.outputs.latest == 'true'",
+             [~r/^        id: diff$/m, ~r/^        if: steps\.tip\.outputs\.latest == 'true'$/m]},
+            {"the close step with if: steps.diff.outputs.close == 'true'",
+             [
+               ~r/^        if: steps\.diff\.outputs\.close == 'true'$/m,
+               ~r/^        run: \.github\/sync\.sh close$/m
+             ]},
+            {"create-pull-request with if: steps.diff.outputs.update == 'true'",
+             [~r/^        if: steps\.diff\.outputs\.update == 'true'$/m, ~r/create-pull-request@/]}
+          ],
+          do: {step, Enum.find_index(steps, fn text -> Enum.all?(patterns, &(text =~ &1)) end)}
+
+    missing = for {step, nil} <- found, do: step
+    assert missing == [], "the sync job in ci.yml lacks: #{Enum.join(missing, "; ")}"
+
+    order = Enum.map(found, &elem(&1, 1))
+    assert order == Enum.sort(order), "the sync job's steps are out of order: #{inspect(found)}"
+  end
+
+  # No YAML parser among the deps: the sync job is the lines under `  sync:` up to the next job,
+  # without comments.
+  defp sync_job do
+    ".github/workflows/ci.yml"
+    |> File.read!()
+    |> String.split("\n")
+    |> Enum.drop_while(&(&1 != "  sync:"))
+    |> Enum.drop(1)
+    |> Enum.take_while(&(not String.match?(&1, ~r/^  \S/)))
+    |> Enum.reject(&String.match?(&1, ~r/^\s*#/))
+    |> Enum.join("\n")
   end
 
   # The steps as ci.yml wires them: tip, then compare, then close when compare says so.
