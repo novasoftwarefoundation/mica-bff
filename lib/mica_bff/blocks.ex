@@ -14,4 +14,11 @@ defmodule MicaBff.Blocks do
     field(:body, :string)
     field(:to, :string)
   end
+
+  defblock :card do
+    field(:title, :string)
+    field(:cta, :string)
+    field(:body, :string)
+    field(:to, :string)
+  end
 end
