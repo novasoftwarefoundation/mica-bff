@@ -10,12 +10,15 @@ defmodule MicaBff.Gen do
 
   @doc """
   Where generated code comes from: `"mica-bff 0.1.0 at 9feb740"`, or without the
-  commit outside a git checkout.
+  commit when git doesn't give one.
   """
   def origin do
-    case System.find_executable("git") &&
-           System.cmd("git", ~w(rev-parse --short HEAD), stderr_to_stdout: true) do
-      {sha, 0} -> "mica-bff #{@version} at #{String.trim(sha)}"
+    with git when is_binary(git) <- System.find_executable("git"),
+         {out, 0} <- System.cmd(git, ~w(rev-parse --short HEAD)),
+         sha = String.trim(out),
+         true <- sha =~ ~r/^[0-9a-f]{7,40}$/ do
+      "mica-bff #{@version} at #{sha}"
+    else
       _ -> "mica-bff #{@version}"
     end
   end
