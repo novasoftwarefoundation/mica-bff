@@ -17,6 +17,18 @@ defmodule MicaBff.GenTest do
     assert dir |> File.ls!() |> Enum.sort() == ["helpers.ex", "section.ex"]
   end
 
+  test "generated files name their origin and are recognised on a rerun", %{tmp_dir: dir} do
+    Mix.Tasks.Bff.Gen.Elixir.run(["--out", dir])
+    Mix.Tasks.Bff.Gen.Swift.run(["--out", dir])
+
+    for file <- ["section.ex", "BFF.swift"], path = Path.join(dir, file) do
+      assert MicaBff.Gen.generated?(path)
+
+      assert hd(String.split(File.read!(path), "\n")) =~
+               ~r/mica-bff \d+\.\d+\.\d+ at [0-9a-f]{7,} /
+    end
+  end
+
   test "a hand-written file with a generated file's name is never overwritten", %{tmp_dir: dir} do
     for {task, file} <- [
           {Mix.Tasks.Bff.Gen.Elixir, "section.ex"},
