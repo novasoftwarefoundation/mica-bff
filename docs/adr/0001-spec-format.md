@@ -24,7 +24,7 @@ The board asked to research a schema format, with XSD-style contract validation 
 | Block catalogue | The blocks themselves, written with the schema DSL | `MicaBff.Blocks` (`__schema__/0` returns it as data) |
 | Pages | The pages the BFF serves (`defpage`) | later |
 | Protocol | The other calls: boot, form submission (`defendpoint`) | later |
-| Generated code | Server and client code, generated from the above | `mica`, `next-ios` |
+| Generated code | Client code, generated from the above; server code, defined from it at compile time | next-ios; mica, by a macro |
 
 Split the spec into two problems (Melle, 2026-10-27):
 
@@ -47,7 +47,11 @@ Split the spec into two problems (Melle, 2026-10-27):
 
 Nested data types (a `defmodel`, e.g. an image with url, width and height) are added when a block needs one.
 
-The generators are Mix tasks in this repo. They read the block catalogue as plain data (`__schema__/0`), not the source. CI regenerates the code and commits it to `mica` (server) and `next-ios` (client), so each repo keeps a reviewable diff and builds without depending on this repo.
+The Swift generator is a Mix task in this repo. It reads the block catalogue as plain data (`__schema__/0`), not the source. CI regenerates the Swift code and commits it to `next-ios`, which keeps a reviewable diff and builds without depending on this repo.
+
+`mica` depends on this repo at compile time at a pinned ref. A macro defines the block modules while it compiles, and the reviewable diff there is the ref bump.
+
+Amended 2026-11-03: `mica` used to get generated code committed by CI as well. Elixir can read the spec directly, so copying it into `mica` added a PR and no value.
 
 ### Compatibility
 
