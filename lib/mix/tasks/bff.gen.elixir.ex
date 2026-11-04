@@ -5,7 +5,8 @@ defmodule Mix.Tasks.Bff.Gen.Elixir do
   @moduledoc """
       mix bff.gen.elixir --out PATH [--namespace #{@default_namespace}]
 
-  Writes one file per block to PATH, e.g. `core/mica/systems/bff/blocks` in mono.
+  Writes one file per block to PATH, e.g. `core/mica/systems/bff/blocks` in mono,
+  and `_spec.ex` with the namespace module, whose `pages/0` lists the spec's pages.
   Files from an earlier run are removed first, so a block removed from the spec
   disappears from the output too. A hand-written file is never overwritten.
   """

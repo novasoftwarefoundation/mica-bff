@@ -27,9 +27,13 @@ defmodule MicaBff.Gen.ElixirTest do
     }
 
     ns = "MicaBffTest.Required#{System.unique_integer([:positive])}"
-    [{_file, source}] = MicaBff.Gen.Elixir.generate(schema, ns)
+    {_file, source} = List.keyfind(MicaBff.Gen.Elixir.generate(schema, ns), "badge.ex", 0)
     [{badge, _}] = Code.compile_string(source)
 
     assert_raise ArgumentError, ~r/:label/, fn -> struct!(badge, []) end
+  end
+
+  test "the namespace module lists the spec's pages", %{namespace: ns} do
+    assert Module.concat([ns]).pages() == MicaBff.Blocks.__schema__().pages
   end
 end

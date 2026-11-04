@@ -2,20 +2,20 @@
 
 The spec for the Mica backend for frontend (BFF): the blocks the server sends and the clients render, and the generators that turn the spec into server code (`mica`) and client code (`next-ios`).
 
-- `lib/mica_bff/schema.ex`: the schema, written as a DSL (`defblock`, `field`)
-- `lib/mica_bff/blocks.ex`: the block catalogue
+- `lib/mica_bff/schema.ex`: the schema, written as a DSL (`defblock`, `field`, `defpage`)
+- `lib/mica_bff/blocks.ex`: the spec: the block catalogue and the pages the BFF serves
 - `lib/mix/tasks/bff.gen.elixir.ex`: generates the Elixir block modules for mica
 - `lib/mix/tasks/bff.gen.swift.ex`: generates the Swift block types for next-ios
 - `fixtures/`: example payloads; generated code must encode and decode them exactly
 - `docs/adr/`: decisions, starting with [0001: spec format](docs/adr/0001-spec-format.md)
 
-Blocks travel as JSON: `{"type": "section", "props": {"title": "...", "body": "...", "to": "/..."}}`.
+Blocks travel as JSON: `{"type": "section", "props": {"title": "...", "body": "...", "to": "/..."}}`. A page (`defpage :home`) is `GET /bff/page/home`, answered with `{"blocks": [...]}`; the app sends the spec version it implements in the `x-bff-spec` header.
 
 ```sh
 mix test   # the Swift tests need swiftc; without it they are skipped locally, never in CI
 mix run -e 'IO.inspect(MicaBff.Blocks.__schema__())'
 
-# one module per block (struct + to_map/1), e.g. Systems.BFF.Blocks.Section
+# one module per block (struct + to_map/1), e.g. Systems.BFF.Blocks.Section, and _spec.ex: Systems.BFF.Blocks.pages/0
 mix bff.gen.elixir --out ../mono/core/mica/systems/bff/blocks
 
 # one file, BFF.swift: enum BFF.Block (one case per block + .unknown) and a struct per block

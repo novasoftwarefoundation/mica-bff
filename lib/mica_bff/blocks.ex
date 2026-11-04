@@ -1,9 +1,13 @@
 defmodule MicaBff.Blocks do
   @moduledoc """
-  The block catalogue: every block the BFF can send and every client can render.
-  On the wire a block is `{"type": "section", "props": {...}}`.
+  The spec: every block the BFF can send and every client can render, and the
+  pages the BFF serves. On the wire a block is `{"type": "section", "props": {...}}`,
+  and a page is `{"blocks": [...]}`.
   """
   use MicaBff.Schema
+
+  # The signed-in user's home: their To-dos.
+  defpage(:home)
 
   # Plain text: an optional title and an optional body. With `to` it is tappable:
   # the client shows a chevron and opens `to` on tap. `to` is a path, resolved
