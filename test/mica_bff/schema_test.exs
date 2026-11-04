@@ -5,7 +5,9 @@ defmodule MicaBff.SchemaTest do
     [{module, _}] =
       compile!("""
       defblock :b do field :y, :integer, required: true; field :x, :string end
+      defpage :settings
       defblock :a do end
+      defpage :home
       """)
 
     assert module.__schema__() == %{
@@ -18,6 +20,10 @@ defmodule MicaBff.SchemaTest do
                  ]
                },
                %{name: :a, fields: []}
+             ],
+             pages: [
+               %{name: :settings, path: "/bff/page/settings"},
+               %{name: :home, path: "/bff/page/home"}
              ]
            }
   end
@@ -26,7 +32,8 @@ defmodule MicaBff.SchemaTest do
     [{module, _}] = compile!("defblock :a do field :x, :string end")
 
     assert module.__schema__() == %{
-             blocks: [%{name: :a, fields: [%{name: :x, type: :string, required: false}]}]
+             blocks: [%{name: :a, fields: [%{name: :x, type: :string, required: false}]}],
+             pages: []
            }
   end
 
@@ -52,7 +59,10 @@ defmodule MicaBff.SchemaTest do
           {~s(defblock :a do field :x, :string, required: "yes" end), 3,
            "field :x: required must be true or false"},
           {"defblock :a do field :x, :string, opts end", 3,
-           "field :x: options must be a literal keyword list"}
+           "field :x: options must be a literal keyword list"},
+          {"defpage :home\ndefpage :home", 4, "page :home is defined twice"},
+          {"defblock :a do defpage :home end", 3, "defpage :home inside defblock :a"},
+          {"defpage :Home", 3, "page name :Home must be a snake_case atom"}
         ] do
       error = assert_raise CompileError, fn -> compile!(body) end
       assert Exception.message(error) =~ "bad.ex:#{line}: #{message}", body

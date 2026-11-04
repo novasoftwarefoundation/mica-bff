@@ -22,7 +22,7 @@ The board asked to research a schema format, with XSD-style contract validation 
 |---|---|---|
 | Schema | What a valid spec is: the DSL (`defblock`, `field`), the primitive types, the rules. The role an XSD plays for XML. | `MicaBff.Schema` |
 | Block catalogue | The blocks themselves, written with the schema DSL | `MicaBff.Blocks` (`__schema__/0` returns it as data) |
-| Pages | The pages the BFF serves (`defpage`) | later |
+| Pages | The pages the BFF serves (`defpage`) | `MicaBff.Blocks` (amended 2026-11-04) |
 | Protocol | The other calls: boot, form submission (`defendpoint`) | later |
 | Generated code | Server and client code, generated from the above | `mica`, `next-ios` |
 
@@ -30,7 +30,7 @@ Split the spec into two problems (Melle, 2026-10-27):
 
 1. **Data model**: an Elixir DSL with macros. The schema defines what a valid spec is, like an XSD for XML; the module that uses it (`MicaBff.Blocks`) is the spec, like the XML document.
    - `defblock` (now): a block the BFF sends and clients render.
-   - `defpage` (later): a page the BFF serves. Always a GET that returns a list of blocks, at `/bff/page/<page>`: the path follows from the page name (`defpage :home` → `GET /bff/page/home`), singular because a request fetches one page. The DSL expands it to an endpoint, so generated code has one list of endpoints and one network client. These requests come from a separate BFF system in mica, not from the existing LiveView routes.
+   - `defpage` (now, amended 2026-11-04): a page the BFF serves. Always a GET that returns `{"blocks": [...]}`, at `/bff/page/<page>`: the path follows from the page name (`defpage :home` → `GET /bff/page/home`), singular because a request fetches one page. `__schema__/0` lists the pages with their paths, and the Elixir generator gives the server `pages/0` on the namespace module, so the BFF serves exactly the spec's pages. The Swift generator doesn't read pages yet; the client's router gets them when it needs to recognise BFF URLs. These requests come from a separate BFF system in mica, not from the existing LiveView routes.
    - `defendpoint` (later): every other call (boot, form submission) with its method, path, request body and response.
 
    Page and endpoint stay separate concepts. A `kind: :page` next to `:get`/`:post` would mix how a request travels (method) with what it returns: a page is always a GET with blocks, and a form POST can also answer with blocks.
@@ -57,7 +57,7 @@ The generators are Mix tasks in this repo. They read the block catalogue as plai
 - A field is deprecated before it is removed, and removed only after the minimum app version no longer reads it.
 - Unknown enum values map to a fallback that the enum declares, once enums exist.
 - The spec version is the git tag (`v0.1.0`, …). CI compares the block catalogue with the last tag and fails on a breaking change.
-- Every BFF request carries the spec version the app implements, so the BFF can answer with blocks that version can render (content negotiation; part of the protocol, `defpage`/`defendpoint`).
+- Every BFF request carries the spec version the app implements, so the BFF can answer with blocks that version can render (content negotiation; part of the protocol, `defpage`/`defendpoint`). It travels in the request header `x-bff-spec` (for example `x-bff-spec: 0.1.0`; amended 2026-11-04). Until the first breaking change the BFF only records it and serves the same blocks to every version.
 
 ## Alternatives
 

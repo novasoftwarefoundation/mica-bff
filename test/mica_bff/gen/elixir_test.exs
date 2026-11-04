@@ -27,9 +27,28 @@ defmodule MicaBff.Gen.ElixirTest do
     }
 
     ns = "MicaBffTest.Required#{System.unique_integer([:positive])}"
-    [{_file, source}] = MicaBff.Gen.Elixir.generate(schema, ns)
+    {_file, source} = List.keyfind(MicaBff.Gen.Elixir.generate(schema, ns), "badge.ex", 0)
     [{badge, _}] = Code.compile_string(source)
 
     assert_raise ArgumentError, ~r/:label/, fn -> struct!(badge, []) end
+  end
+
+  test "the namespace module lists the spec's pages", %{namespace: ns} do
+    assert Module.concat([ns]).pages() == MicaBff.Blocks.__schema__().pages
+  end
+
+  test "a catalogue beyond inspect's limit is generated whole" do
+    pages = for i <- 1..100, do: %{name: :"page_#{i}", path: "/bff/page/page_#{i}"}
+    fields = for i <- 1..100, do: %{name: :"field_#{i}", type: :string, required: true}
+    schema = %{pages: pages, blocks: [%{name: :wide, fields: fields}]}
+
+    ns = "MicaBffTest.Large#{System.unique_integer([:positive])}"
+
+    for {_file, source} <- MicaBff.Gen.Elixir.generate(schema, ns),
+        do: Code.compile_string(source)
+
+    assert Module.concat([ns]).pages() == pages
+    wide = struct!(Module.concat(ns, Wide), Map.new(fields, &{&1.name, "x"}))
+    assert map_size(Map.from_struct(wide)) == 100
   end
 end

@@ -17,19 +17,23 @@ defmodule MicaBff.Schema do
   - `field` declares a prop: a snake_case name, a primitive type (`:string`,
     `:integer`, `:float`, `:boolean`) and `required: true | false` (default
     `false`). Never a block: blocks have no children, a page is a flat list of blocks.
+  - `defpage` declares a page the BFF serves: always a GET at `/bff/page/<name>`
+    that returns a flat list of blocks (`defpage :home` is `GET /bff/page/home`).
 
   Every mistake fails at compile time and points at its line: an unknown type or
   option, a name that isn't a snake_case atom, a duplicate name, a block used as
   a field type or named after a primitive, a `field` outside a `defblock`, and a
-  `defblock` inside another one. Generators read `__schema__/0`, never the source.
+  `defblock` or `defpage` inside a `defblock`. Generators read `__schema__/0`,
+  never the source.
   """
 
   @primitives [:string, :integer, :float, :boolean]
 
   defmacro __using__(_opts) do
     quote do
-      import MicaBff.Schema, only: [defblock: 2, field: 2, field: 3]
+      import MicaBff.Schema, only: [defblock: 2, defpage: 1, field: 2, field: 3]
       Module.register_attribute(__MODULE__, :mica_bff_blocks, accumulate: true)
+      Module.register_attribute(__MODULE__, :mica_bff_pages, accumulate: true)
       @before_compile MicaBff.Schema
     end
   end
@@ -96,26 +100,54 @@ defmodule MicaBff.Schema do
     end
   end
 
+  defmacro defpage(name) do
+    line = __CALLER__.line
+
+    quote do
+      if open = Module.get_attribute(__MODULE__, :mica_bff_open_block) do
+        MicaBff.Schema.__fail__(
+          __ENV__.file,
+          unquote(line),
+          "defpage #{inspect(unquote(name))} inside defblock #{inspect(open)}"
+        )
+      end
+
+      @mica_bff_pages %{name: unquote(name), line: unquote(line)}
+    end
+  end
+
   @doc false
   def __fail__(file, line, description),
     do: raise(CompileError, file: file, line: line, description: description)
 
   defmacro __before_compile__(env) do
     blocks = env.module |> Module.get_attribute(:mica_bff_blocks) |> Enum.reverse()
+    pages = env.module |> Module.get_attribute(:mica_bff_pages) |> Enum.reverse()
     validate!(blocks, env.file)
+    validate_pages!(pages, env.file)
 
-    # Line numbers are only for error messages; generators get the plain catalogue.
+    # Line numbers are only for error messages; generators get the plain spec.
     schema = %{
       blocks:
         for block <- blocks do
           %{name: block.name, fields: Enum.map(block.fields, &Map.delete(&1, :line))}
-        end
+        end,
+      pages: for(page <- pages, do: %{name: page.name, path: "/bff/page/#{page.name}"})
     }
 
     quote do
-      @doc "The block catalogue as plain data, for generators and validation."
+      @doc "The spec as plain data (blocks and pages), for generators and validation."
       def __schema__, do: unquote(Macro.escape(schema))
     end
+  end
+
+  defp validate_pages!(pages, file) do
+    Enum.reduce(pages, MapSet.new(), fn %{name: name, line: line}, seen ->
+      fail = &__fail__(file, line, &1)
+      check_name!(name, "page", fail)
+      if name in seen, do: fail.("page #{inspect(name)} is defined twice")
+      MapSet.put(seen, name)
+    end)
   end
 
   # Blocks have no children: a page is a flat list of blocks, so no field may hold a block.
