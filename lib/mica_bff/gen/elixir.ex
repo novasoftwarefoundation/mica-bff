@@ -33,7 +33,7 @@ defmodule MicaBff.Gen.Elixir do
 
       @doc "The pages the BFF serves, in spec order."
       @spec pages() :: [%{name: atom, path: String.t()}]
-      def pages, do: #{inspect(pages)}
+      def pages, do: #{literal(pages)}
     end
     """
     |> Code.format_string!()
@@ -59,8 +59,8 @@ defmodule MicaBff.Gen.Elixir do
     #{header}
     defmodule #{namespace}.#{Macro.camelize(to_string(name))} do
       @moduledoc "Block `#{name}`."
-      @enforce_keys #{inspect(Enum.map(required, & &1.name))}
-      defstruct #{inspect(keys)}
+      @enforce_keys #{literal(Enum.map(required, & &1.name))}
+      defstruct #{literal(keys)}
 
       @type t :: %__MODULE__{#{types}}
 
@@ -76,4 +76,7 @@ defmodule MicaBff.Gen.Elixir do
 
   defp type(%{type: type, required: true}), do: @types[type]
   defp type(%{type: type}), do: "#{@types[type]} | nil"
+
+  # Not inspect/1: its default limit truncates large terms to `...`, which doesn't compile.
+  defp literal(term), do: term |> Macro.escape() |> Macro.to_string()
 end
