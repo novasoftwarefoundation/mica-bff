@@ -14,7 +14,7 @@ defmodule MicaBff.GenTest do
 
     Mix.Tasks.Bff.Gen.Elixir.run(["--out", dir])
 
-    blocks = for %{name: name} <- MicaBff.Blocks.__schema__().blocks, do: "#{name}.ex"
+    blocks = for %{name: name} <- MicaBff.Spec.__schema__().blocks, do: "#{name}.ex"
     assert dir |> File.ls!() |> Enum.sort() == Enum.sort(["_spec.ex", "helpers.ex" | blocks])
   end
 

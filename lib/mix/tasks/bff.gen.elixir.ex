@@ -26,7 +26,7 @@ defmodule Mix.Tasks.Bff.Gen.Elixir do
         MicaBff.Gen.generated?(file),
         do: File.rm!(file)
 
-    for {name, source} <- MicaBff.Gen.Elixir.generate(MicaBff.Blocks.__schema__(), namespace),
+    for {name, source} <- MicaBff.Gen.Elixir.generate(MicaBff.Spec.__schema__(), namespace),
         do: MicaBff.Gen.write!(Path.join(out, name), source)
   end
 end

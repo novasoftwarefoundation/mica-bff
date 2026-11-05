@@ -21,14 +21,14 @@ The board asked to research a schema format, with XSD-style contract validation 
 | Layer | What | Where |
 |---|---|---|
 | Schema | What a valid spec is: the DSL (`defblock`, `field`), the primitive types, the rules. The role an XSD plays for XML. | `MicaBff.Schema` |
-| Block catalogue | The blocks themselves, written with the schema DSL | `MicaBff.Blocks` (`__schema__/0` returns it as data) |
-| Pages | The pages the BFF serves (`defpage`) | `MicaBff.Blocks` (amended 2026-11-04) |
+| Block catalogue | The blocks themselves, written with the schema DSL | `MicaBff.Blocks` |
+| Pages | The pages the BFF serves (`defpage`) | `MicaBff.Pages` (amended 2026-11-05) |
 | Protocol | The other calls: boot, form submission (`defendpoint`) | later |
 | Generated code | Server and client code, generated from the above | `mica`, `next-ios` |
 
 Split the spec into two problems (Melle, 2026-10-27):
 
-1. **Data model**: an Elixir DSL with macros. The schema defines what a valid spec is, like an XSD for XML; the module that uses it (`MicaBff.Blocks`) is the spec, like the XML document.
+1. **Data model**: an Elixir DSL with macros. The schema defines what a valid spec is, like an XSD for XML; the modules that use it are the spec, like the XML document: one per kind (`MicaBff.Blocks`, `MicaBff.Pages`), composed by `MicaBff.Spec`, whose `__schema__/0` returns the whole spec as data (amended 2026-11-05).
    - `defblock` (now): a block the BFF sends and clients render.
    - `defpage` (now, amended 2026-11-04): a page the BFF serves. Always a GET that returns `{"blocks": [...]}`, at `/bff/page/<page>`: the path follows from the page name (`defpage :home` → `GET /bff/page/home`), singular because a request fetches one page. `__schema__/0` lists the pages with their paths, and the Elixir generator gives the server `pages/0` on the namespace module, so the BFF serves exactly the spec's pages. The Swift generator doesn't read pages yet; the client's router gets them when it needs to recognise BFF URLs. These requests come from a separate BFF system in mica, not from the existing LiveView routes.
    - `defendpoint` (later): every other call (boot, form submission) with its method, path, request body and response.
