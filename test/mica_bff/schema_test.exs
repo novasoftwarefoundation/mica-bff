@@ -37,6 +37,29 @@ defmodule MicaBff.SchemaTest do
            }
   end
 
+  test "since and deprecated are in the schema when set and absent when not" do
+    [{module, _}] =
+      compile!("""
+      defblock :a do
+        field :both, :string, since: "0.2.0", deprecated: "0.10.0"
+        field :same, :string, since: "0.2.0", deprecated: "0.2.0"
+        field :old, :string, required: true, deprecated: "0.3.0"
+        field :new, :string, since: "0.2.0"
+        field :plain, :string
+      end
+      """)
+
+    assert [%{fields: fields}] = module.__schema__().blocks
+
+    assert fields == [
+             %{name: :both, type: :string, required: false, since: "0.2.0", deprecated: "0.10.0"},
+             %{name: :same, type: :string, required: false, since: "0.2.0", deprecated: "0.2.0"},
+             %{name: :old, type: :string, required: true, deprecated: "0.3.0"},
+             %{name: :new, type: :string, required: false, since: "0.2.0"},
+             %{name: :plain, type: :string, required: false}
+           ]
+  end
+
   # The body starts at line 3 of bad.ex.
   test "mistakes fail at compile time and point at their line" do
     for {body, line, message} <- [
@@ -55,14 +78,28 @@ defmodule MicaBff.SchemaTest do
            ~s(field name "x" must be a snake_case atom)},
           {"defblock :string do end", 3, "block :string clashes with the primitive type :string"},
           {"defblock :a do field :x, :string, optional: true end", 3,
-           "field :x has unknown option(s) [:optional]; allowed: [:required]"},
+           "field :x has unknown option(s) [:optional]; allowed: [:required, :since, :deprecated]"},
           {~s(defblock :a do field :x, :string, required: "yes" end), 3,
            "field :x: required must be true or false"},
           {"defblock :a do field :x, :string, opts end", 3,
            "field :x: options must be a literal keyword list"},
           {"defpage :home\ndefpage :home", 4, "page :home is defined twice"},
           {"defblock :a do defpage :home end", 3, "defpage :home inside defblock :a"},
-          {"defpage :Home", 3, "page name :Home must be a snake_case atom"}
+          {"defpage :Home", 3, "page name :Home must be a snake_case atom"},
+          {~s(defblock :a do\nfield :x, :string, since: "v0.2.0"\nend), 4,
+           ~s(field :x: since must be a literal version like "0.2.0", got "v0.2.0")},
+          {~s(defblock :a do field :x, :string, since: "0.2" end), 3,
+           ~s(field :x: since must be a literal version like "0.2.0", got "0.2")},
+          {~S(defblock :a do field :x, :string, since: "0.2.0\n" end), 3,
+           "field :x: since must be a literal version"},
+          {"defblock :a do field :x, :string, since: 2 end", 3,
+           ~s(field :x: since must be a literal version like "0.2.0", got 2)},
+          {~s(defblock :a do field :x, :string, deprecated: "1.0" end), 3,
+           ~s(field :x: deprecated must be a literal version like "0.2.0", got "1.0")},
+          {"defblock :a do field :x, :string, deprecated: :soon end", 3,
+           ~s(field :x: deprecated must be a literal version like "0.2.0", got :soon)},
+          {~s(defblock :a do\nfield :x, :string, since: "0.10.0", deprecated: "0.9.0"\nend), 4,
+           "field :x: deprecated 0.9.0 is before since 0.10.0"}
         ] do
       error = assert_raise CompileError, fn -> compile!(body) end
       assert Exception.message(error) =~ "bad.ex:#{line}: #{message}", body

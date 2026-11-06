@@ -57,6 +57,7 @@ The generators are Mix tasks in this repo. They read the block catalogue as plai
 - A field is deprecated before it is removed, and removed only after the minimum app version no longer reads it.
 - Unknown enum values map to a fallback that the enum declares, once enums exist.
 - The spec version is the git tag (`v0.1.0`, …). CI compares the block catalogue with the last tag and fails on a breaking change.
+- A field records its versions with `since:` and `deprecated:` (amended 2026-11-05). `mix bff.compat` enforces the rules above in CI; a field that was deprecated in the last tag may be removed without failing. CI only checks that deprecation: "removed only after the minimum app version no longer reads it" stays a human check.
 - Every BFF request carries the spec version the app implements, so the BFF can answer with blocks that version can render (content negotiation; part of the protocol, `defpage`/`defendpoint`). It travels in the request header `x-bff-spec` (for example `x-bff-spec: 0.1.0`; amended 2026-11-04). Until the first breaking change the BFF only records it and serves the same blocks to every version.
 
 ## Alternatives
@@ -71,7 +72,7 @@ The generators are Mix tasks in this repo. They read the block catalogue as plai
 ## Consequences
 
 - One language for the spec, the generators and the server; generators get the full spec as data, without parsing a schema language.
-- A mistake in the spec fails at compile time and points at its line: an unknown type or option, a name that isn't a snake_case atom, a duplicate name, a block used as a field or named after a primitive, a `field` outside a `defblock`, a `defblock` inside another.
+- A mistake in the spec fails at compile time and points at its line: an unknown type or option, a name that isn't a snake_case atom, a duplicate name, a block used as a field or named after a primitive, a `field` outside a `defblock`, a `defblock` inside another, a malformed or out-of-order version.
 - Payload validation is not built yet. A validator against `__schema__/0`, plus example payloads per block that the generated server and client code must encode and decode, is planned as the contract validation work. Until then the rules above are prose.
 - Editing the spec means editing Elixir, also for iOS developers. If that becomes a problem, a docs generator generates the spec as Markdown.
 - A consumer that needs a standard schema (Android tooling, external parties) gets one more generator that exports JSON Schema from the same data.
