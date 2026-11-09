@@ -90,6 +90,13 @@ defmodule MicaBff.Gen.ElixirTest do
     assert_raise ArgumentError, ~r/:label/, fn -> struct!(badge, []) end
   end
 
+  test "a key put on a block that the spec doesn't have is not sent" do
+    badge = Module.concat(namespace_for(Spec), Badge)
+    block = Map.put(struct!(badge, label: "x"), :participant_id, 42)
+
+    assert badge.to_map(block) == %{"type" => "badge", "props" => %{"label" => "x"}}
+  end
+
   test "an unknown field fails at compile time" do
     source = "%#{inspect(namespace_for(Spec))}.Badge{nope: 1}"
 
@@ -108,6 +115,14 @@ defmodule MicaBff.Gen.ElixirTest do
     message = ~r/use_test\.exs:2: use MicaBff\.Gen\.Elixir needs spec: MicaBff\.Spec/
 
     assert_raise CompileError, message, fn -> compile_use("") end
+  end
+
+  test "use with an option other than spec fails with the file and line" do
+    message = ~r/use_test\.exs:2: use MicaBff\.Gen\.Elixir has unknown option\(s\) \[:namespace\]/
+
+    assert_raise CompileError, message, fn ->
+      compile_use(", spec: MicaBff.Spec, namespace: Systems.BFF.Blocks")
+    end
   end
 
   test "use with a module that is not a spec fails with the file and line" do

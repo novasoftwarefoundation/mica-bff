@@ -25,6 +25,7 @@ defmodule MicaBff.Gen.Elixir do
   }
 
   defmacro __using__(opts) do
+    opts = options!(opts, __CALLER__)
     spec = spec!(opts[:spec], __CALLER__)
     schema = spec.__schema__()
     modules = Enum.map(schema.blocks, &block_module(&1, __CALLER__.module))
@@ -39,6 +40,26 @@ defmodule MicaBff.Gen.Elixir do
       def pages, do: unquote(Macro.escape(pages))
 
       unquote_splicing(modules)
+    end
+  end
+
+  defp options!(opts, env) do
+    case Keyword.keyword?(opts) && Keyword.validate(opts, [:spec]) do
+      {:ok, opts} ->
+        opts
+
+      {:error, unknown} ->
+        message =
+          "use MicaBff.Gen.Elixir has unknown option(s) #{inspect(unknown)}; allowed: [:spec]"
+
+        MicaBff.Schema.__fail__(env.file, env.line, message)
+
+      false ->
+        MicaBff.Schema.__fail__(
+          env.file,
+          env.line,
+          "use MicaBff.Gen.Elixir takes spec: MicaBff.Spec"
+        )
     end
   end
 
@@ -90,8 +111,9 @@ defmodule MicaBff.Gen.Elixir do
       def to_map(%__MODULE__{} = block),
         do: %{"type" => unquote(to_string(name)), "props" => props(block)}
 
+      # Only the spec's fields: a key put on the struct by hand is never sent.
       defp props(block) do
-        for {key, value} <- Map.from_struct(block),
+        for {key, value} <- Map.take(block, unquote(keys)),
             value != nil or key in unquote(required),
             into: %{},
             do: {Atom.to_string(key), value}
