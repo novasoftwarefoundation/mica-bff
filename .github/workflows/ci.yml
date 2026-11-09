@@ -35,9 +35,6 @@ jobs:
           - repo: next-ios
             task: bff.gen.swift
             out: Next/BFF
-          - repo: mono
-            task: bff.gen.elixir
-            out: core/mica/systems/bff/blocks
     steps:
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app

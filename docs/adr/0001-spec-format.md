@@ -24,13 +24,13 @@ The board asked to research a schema format, with XSD-style contract validation 
 | Block catalogue | The blocks themselves, written with the schema DSL | `MicaBff.Blocks` |
 | Pages | The pages the BFF serves (`defpage`) | `MicaBff.Pages` (amended 2026-11-05) |
 | Protocol | The other calls: boot, form submission (`defendpoint`) | later |
-| Generated code | Server and client code, generated from the above | `mica`, `next-ios` |
+| Generated code | Client code, generated from the above; server code, defined from it at compile time | next-ios; mica, by a macro |
 
 Split the spec into two problems (Melle, 2026-10-27):
 
 1. **Data model**: an Elixir DSL with macros. The schema defines what a valid spec is, like an XSD for XML; the modules that use it are the spec, like the XML document: one per kind (`MicaBff.Blocks`, `MicaBff.Pages`), composed by `MicaBff.Spec`, whose `__schema__/0` returns the whole spec as data (amended 2026-11-05).
    - `defblock` (now): a block the BFF sends and clients render.
-   - `defpage` (now, amended 2026-11-04): a page the BFF serves. Always a GET that returns `{"blocks": [...]}`, at `/bff/page/<page>`: the path follows from the page name (`defpage :home` → `GET /bff/page/home`), singular because a request fetches one page. `__schema__/0` lists the pages with their paths, and the Elixir generator gives the server `pages/0` on the namespace module, so the BFF serves exactly the spec's pages. The Swift generator doesn't read pages yet; the client's router gets them when it needs to recognise BFF URLs. These requests come from a separate BFF system in mica, not from the existing LiveView routes.
+   - `defpage` (now, amended 2026-11-04): a page the BFF serves. Always a GET that returns `{"blocks": [...]}`, at `/bff/page/<page>`: the path follows from the page name (`defpage :home` → `GET /bff/page/home`), singular because a request fetches one page. `__schema__/0` lists the pages with their paths, and the Elixir macro gives the server `pages/0` on the namespace module, so the BFF serves exactly the spec's pages. The Swift generator doesn't read pages yet; the client's router gets them when it needs to recognise BFF URLs. These requests come from a separate BFF system in mica, not from the existing LiveView routes.
    - `defendpoint` (later): every other call (boot, form submission) with its method, path, request body and response.
 
    Page and endpoint stay separate concepts. A `kind: :page` next to `:get`/`:post` would mix how a request travels (method) with what it returns: a page is always a GET with blocks, and a form POST can also answer with blocks.
@@ -47,7 +47,11 @@ Split the spec into two problems (Melle, 2026-10-27):
 
 Nested data types (a `defmodel`, e.g. an image with url, width and height) are added when a block needs one.
 
-The generators are Mix tasks in this repo. They read the block catalogue as plain data (`__schema__/0`), not the source. CI regenerates the code and commits it to `mica` (server) and `next-ios` (client), so each repo keeps a reviewable diff and builds without depending on this repo.
+The Swift generator is a Mix task in this repo. It reads the block catalogue as plain data (`__schema__/0`), not the source. CI regenerates the Swift code and commits it to `next-ios`, which keeps a reviewable diff and builds without depending on this repo.
+
+`mica` depends on this repo at compile time at a pinned ref. A macro defines the block modules while it compiles, and the reviewable diff there is the ref bump.
+
+Amended 2026-11-09: `mica` used to get generated code committed by CI as well. Elixir can read the spec directly, so copying it into `mica` added a PR and no value.
 
 ### Compatibility
 
