@@ -44,24 +44,34 @@ defmodule MicaBff.Gen.SwiftTest do
   test "fixtures decode, and bad blocks become .unknown without failing the page", %{
     tmp_dir: dir
   } do
-    tappable = "fixtures/section_tappable.json" |> File.read!() |> String.trim()
-    plain = "fixtures/section_plain.json" |> File.read!() |> String.trim()
-    body = "fixtures/section_body.json" |> File.read!() |> String.trim()
+    fixture = &(Path.join("fixtures", &1) |> File.read!() |> String.trim())
 
     run_swift!(dir, MicaBff.Spec.__schema__(), """
     [
-        check("tappable", #"#{tappable}"#,
-              BFF.Block.section(.init(title: "Available studies", body: "Studies you can take part in right now.", to: "/pool/1/marketplace"))),
-        check("plain", #"#{plain}"#, BFF.Block.section(.init(title: "Studies", body: nil, to: nil))),
-        check("body only", #"#{body}"#, BFF.Block.section(.init(title: nil, body: "You have no open studies.", to: nil))),
+        check("tappable", #"#{fixture.("section_tappable.json")}"#,
+              BFF.Block.section(.init(title: "Available studies", body: "Studies you can take part in right now.", to: "/pool/1/marketplace", count: nil, imageUrl: nil))),
+        check("plain", #"#{fixture.("section_plain.json")}"#, BFF.Block.section(.init(title: "Studies", body: nil, to: nil, count: nil, imageUrl: nil))),
+        check("body only", #"#{fixture.("section_body.json")}"#, BFF.Block.section(.init(title: nil, body: "You have no open studies.", to: nil, count: nil, imageUrl: nil))),
+        check("heading", #"#{fixture.("section_heading.json")}"#,
+              BFF.Block.section(.init(title: "Marketplace", body: "Studies you can take part in right now.", to: nil, count: 12, imageUrl: "/images/logos/pool/panl_wide.png"))),
+        check("next best action", #"#{fixture.("next_best_action.json")}"#,
+              BFF.Block.nextBestAction(.init(title: "Complete your profile", body: "Researchers need a few details before you can take part.", cta: "Go to profile", to: "/user/account"))),
+        check("reward amount", #"#{fixture.("reward_amount.json")}"#,
+              BFF.Block.rewardAmount(.init(label: "Approved", tone: .success, amount: "€ 12,50", caption: "You can pay out from € 10,00"))),
+        check("advert", #"#{fixture.("advert.json")}"#,
+              BFF.Block.advert(.init(title: "Sleep and screens", to: "/promotion/7", imageUrl: "https://images.example.org/sleep.jpg", logoUrl: "/images/logos/uu.png", tags: ["Health", "Media"], info: "Duration: 10 min. | Reward: € 2,00"))),
+        check("participation", #"#{fixture.("participation.json")}"#,
+              BFF.Block.participation(.init(title: "Sleep and screens", subtitle: "2 days ago", statusLabel: "Awaiting", statusTone: .warning, reward: "Reward € 2,00", to: "/assignment/7"))),
+        check("unknown tone", #"{"type": "participation", "props": {"title": "A", "status_tone": "sparkly"}}"#,
+              BFF.Block.participation(.init(title: "A", subtitle: nil, statusLabel: nil, statusTone: .neutral, reward: nil, to: nil))),
         check("null prop", #"{"type": "section", "props": {"title": "A", "to": null}}"#,
-              BFF.Block.section(.init(title: "A", body: nil, to: nil))),
+              BFF.Block.section(.init(title: "A", body: nil, to: nil, count: nil, imageUrl: nil))),
         check("unknown keys", #"{"type": "section", "id": 1, "props": {"title": "A", "icon": "x"}}"#,
-              BFF.Block.section(.init(title: "A", body: nil, to: nil))),
+              BFF.Block.section(.init(title: "A", body: nil, to: nil, count: nil, imageUrl: nil))),
         check("wrong type for an optional prop", #"{"type": "section", "props": {"title": "Studies", "to": 5}}"#,
-              BFF.Block.section(.init(title: "Studies", body: nil, to: nil))),
+              BFF.Block.section(.init(title: "Studies", body: nil, to: nil, count: nil, imageUrl: nil))),
         check("page", #"[{"type": "section", "props": {"title": "A"}}, {"type": "carousel", "props": {}}, {"type": "section"}, {"type": "section", "props": 1}, null, {"type": 3}]"#,
-              [BFF.Block.section(.init(title: "A", body: nil, to: nil)), .unknown(type: "carousel"),
+              [BFF.Block.section(.init(title: "A", body: nil, to: nil, count: nil, imageUrl: nil)), .unknown(type: "carousel"),
               .unknown(type: "section"), .unknown(type: "section"), .unknown(type: ""),
               .unknown(type: "")]),
     ]
