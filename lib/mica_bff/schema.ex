@@ -14,21 +14,25 @@ defmodule MicaBff.Schema do
       end
 
   - `defblock` declares a block the BFF can send and clients can render.
-  - `field` declares a prop: a snake_case name, a primitive type (`:string`,
-    `:integer`, `:float`, `:boolean`) and `required: true | false` (default
-    `false`). Never a block: blocks have no children, a page is a flat list of blocks.
+  - `field` declares a prop: a snake_case name, a type and `required: true | false`
+    (default `false`). A type is a primitive (`:string`, `:integer`, `:float`,
+    `:boolean`), an enum (`{:enum, [:accent, :neutral]}`, snake_case values, with
+    `fallback:` one of them: what a client makes of a value it doesn't know) or a
+    list of one primitive (`{:list, :string}`). Never a block: blocks have no
+    children, a page is a flat list of blocks.
     Two more options, both a literal `"major.minor.patch"` spec version (the git tag
     without its `v`) and left out of `__schema__/0` when unset: `since:` (the version
     that added the field) and `deprecated:` (the version that deprecated it, not
-    before `since:`).
+    before `since:`). `fallback:` is in `__schema__/0` only on an enum.
   - `defpage` declares a page the BFF serves: always a GET at `/bff/page/<name>`
     that returns a flat list of blocks (`defpage :home` is `GET /bff/page/home`).
 
   Every mistake fails at compile time and points at its line: an unknown type or
   option, a name that isn't a snake_case atom, a duplicate name, a block used as
-  a field type or named after a primitive, a `field` outside a `defblock`, a
-  `defblock` or `defpage` inside a `defblock`, and a malformed or out-of-order
-  version. Generators read `__schema__/0`, never the source.
+  a field type or named after a primitive, an enum without values or without a
+  fallback among them, a list of anything but a primitive, a `field` outside a
+  `defblock`, a `defblock` or `defpage` inside a `defblock`, and a malformed or
+  out-of-order version. Generators read `__schema__/0`, never the source.
   """
 
   @primitives [:string, :integer, :float, :boolean]
@@ -76,13 +80,13 @@ defmodule MicaBff.Schema do
     unless Keyword.keyword?(opts), do: fail.(": options must be a literal keyword list")
 
     opts =
-      case Keyword.validate(opts, required: false, since: nil, deprecated: nil) do
+      case Keyword.validate(opts, required: false, since: nil, deprecated: nil, fallback: nil) do
         {:ok, opts} ->
           opts
 
         {:error, unknown} ->
           fail.(
-            " has unknown option(s) #{inspect(unknown)}; allowed: [:required, :since, :deprecated]"
+            " has unknown option(s) #{inspect(unknown)}; allowed: [:required, :since, :deprecated, :fallback]"
           )
       end
 
@@ -91,7 +95,7 @@ defmodule MicaBff.Schema do
     check_version!(:since, opts[:since], fail)
     check_version!(:deprecated, opts[:deprecated], fail)
     check_version_order!(opts[:since], opts[:deprecated], fail)
-    versions = for key <- [:since, :deprecated], version = opts[key], do: {key, version}
+    extras = for key <- [:since, :deprecated, :fallback], value = opts[key], do: {key, value}
 
     quote do
       unless Module.get_attribute(__MODULE__, :mica_bff_open_block) do
@@ -103,7 +107,7 @@ defmodule MicaBff.Schema do
       end
 
       @mica_bff_fields %{
-        unquote_splicing(versions),
+        unquote_splicing(extras),
         name: unquote(name),
         type: unquote(type),
         required: unquote(opts[:required]),
@@ -182,24 +186,65 @@ defmodule MicaBff.Schema do
         if field.name in seen_fields,
           do: fail.("#{inspect(name)} has field #{inspect(field.name)} twice")
 
-        cond do
-          field.type in @primitives ->
-            :ok
-
-          field.type in block_names ->
-            fail.(
-              "#{inspect(name)}.#{field.name} holds block #{inspect(field.type)}; blocks have no children"
-            )
-
-          true ->
-            fail.("#{inspect(name)}.#{field.name} has unknown type #{inspect(field.type)}")
-        end
+        check_type!(name, field, block_names, fail)
 
         MapSet.put(seen_fields, field.name)
       end)
 
       MapSet.put(seen, name)
     end)
+  end
+
+  defp check_type!(block, %{name: name, type: type} = field, block_names, fail) do
+    at = "#{inspect(block)}.#{name}"
+
+    cond do
+      type in @primitives ->
+        :ok
+
+      match?({:list, element} when element in @primitives, type) ->
+        :ok
+
+      match?({:enum, _values}, type) ->
+        check_enum!(at, field, fail)
+
+      block_type(type) in block_names ->
+        fail.("#{at} holds block #{inspect(block_type(type))}; blocks have no children")
+
+      match?({:list, _}, type) ->
+        fail.("#{at}: a list holds one primitive type, got #{inspect(elem(type, 1))}")
+
+      true ->
+        fail.("#{at} has unknown type #{inspect(type)}")
+    end
+
+    if Map.has_key?(field, :fallback) and not match?({:enum, _}, type),
+      do: fail.("#{at}: fallback is only for an enum")
+  end
+
+  defp block_type({:list, block}), do: block
+  defp block_type(block), do: block
+
+  # Values become wire strings and Swift cases; the fallback is what a client shows
+  # for a value it doesn't know (ADR 0001).
+  defp check_enum!(at, %{type: {:enum, values}} = field, fail) do
+    unless is_list(values) and values != [],
+      do: fail.("#{at}: an enum needs a list of values, got #{inspect(values)}")
+
+    Enum.reduce(values, MapSet.new(), fn value, seen ->
+      check_name!(value, "enum value", fail)
+      if value in seen, do: fail.("#{at} has enum value #{inspect(value)} twice")
+      MapSet.put(seen, value)
+    end)
+
+    case Map.fetch(field, :fallback) do
+      :error ->
+        fail.("#{at}: an enum needs fallback: one of its values")
+
+      {:ok, fallback} ->
+        unless fallback in values,
+          do: fail.("#{at}: fallback #{inspect(fallback)} is not one of #{inspect(values)}")
+    end
   end
 
   defp check_version!(_key, nil, _fail), do: :ok

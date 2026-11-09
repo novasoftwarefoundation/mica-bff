@@ -33,6 +33,38 @@ defmodule MicaBff.Gen.ElixirTest do
     assert_raise ArgumentError, ~r/:label/, fn -> struct!(badge, []) end
   end
 
+  test "an enum is an atom in the struct and a string on the wire; a list is sent as it is" do
+    schema = %{
+      blocks: [
+        %{
+          name: :badge,
+          fields: [
+            %{
+              name: :tone,
+              type: {:enum, [:success, :in_progress]},
+              required: true,
+              fallback: :success
+            },
+            %{name: :status, type: {:enum, [:on, :off]}, required: false, fallback: :off},
+            %{name: :tags, type: {:list, :string}, required: false}
+          ]
+        }
+      ]
+    }
+
+    ns = "MicaBffTest.Types#{System.unique_integer([:positive])}"
+    {_file, source} = List.keyfind(MicaBff.Gen.Elixir.generate(schema, ns), "badge.ex", 0)
+    [{badge, _}] = Code.compile_string(source)
+
+    assert badge.to_map(struct!(badge, tone: :in_progress, status: :on, tags: ["a", "b"])) ==
+             JSON.decode!(
+               ~s({"type": "badge", "props": {"tone": "in_progress", "status": "on", "tags": ["a", "b"]}})
+             )
+
+    assert badge.to_map(struct!(badge, tone: :success, tags: [])) ==
+             JSON.decode!(~s({"type": "badge", "props": {"tone": "success", "tags": []}}))
+  end
+
   test "the namespace module lists the spec's pages", %{namespace: ns} do
     assert Module.concat([ns]).pages() == MicaBff.Spec.__schema__().pages
   end

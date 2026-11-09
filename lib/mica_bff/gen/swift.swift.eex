@@ -37,7 +37,42 @@ extension <%= @namespace %> {
         private enum CodingKeys: Swift.String, Swift.CodingKey {
 <%= for field <- block.fields do %>            case <%= field.key %>
 <% end %>        }
+<% end %><%= for enum <- block.enums do %>
+        enum <%= enum.type %>: Swift.String, Swift.Decodable, Swift.Equatable, Swift.Sendable {
+<%= for value <- enum.cases do %>            case <%= value %>
+<% end %>
+            /// A value this app doesn't know becomes `<%= enum.fallback %>` (ADR 0001).
+            init(from decoder: any Swift.Decoder) throws {
+                let value = try decoder.singleValueContainer().decode(Swift.String.self)
+                self = Self(rawValue: value) ?? <%= enum.fallback %>
+            }
+        }
 <% end %>    }
+<% end %><%= if @lossy do %>
+    /// A list prop: an element that doesn't decode (a changed type, `null`) is dropped
+    /// and the rest of the list stays (ADR 0001).
+    struct LossyList<Element: Swift.Decodable>: Swift.Decodable {
+        let values: [Element]
+
+        init(from decoder: any Swift.Decoder) throws {
+            var container = try decoder.unkeyedContainer()
+            var values: [Element] = []
+            while !container.isAtEnd {
+                if try container.decodeNil() { continue }
+                if let value = try? container.decode(Element.self) {
+                    values.append(value)
+                } else {
+                    _ = try container.decode(Skip.self)
+                }
+            }
+            self.values = values
+        }
+
+        /// Decodes from any value without reading it: moves past an element that didn't decode.
+        private struct Skip: Swift.Decodable {
+            init(from decoder: any Swift.Decoder) {}
+        }
+    }
 <% end %>}
 <%= for block <- @blocks, block.fields != [] do %>
 // Required props must decode; an optional prop that doesn't decode (e.g. a changed
@@ -46,8 +81,7 @@ extension <%= @namespace %> {
 extension <%= @namespace %>.<%= block.type %> {
     init(from decoder: any Swift.Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-<%= for field <- block.fields do %><%= if field.required do %>        self.<%= field.ident %> = try container.decode(<%= field.swift_type %>.self, forKey: .<%= field.ident %>)
-<% else %>        self.<%= field.ident %> = try? container.decodeIfPresent(<%= field.swift_type %>.self, forKey: .<%= field.ident %>)
-<% end %><% end %>    }
+<%= for field <- block.fields do %>        self.<%= field.ident %> = <%= field.decode %>
+<% end %>    }
 }
 <% end %>

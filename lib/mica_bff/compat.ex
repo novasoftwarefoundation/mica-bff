@@ -7,7 +7,9 @@ defmodule MicaBff.Compat do
 
   Breaking: removing a block, removing a field that wasn't deprecated in the old
   schema, changing a field's type, making an optional field required, and adding
-  a required field to an existing block. Anything else is compatible.
+  a required field to an existing block. Anything else is compatible, also
+  adding or removing an enum's values or changing its fallback: a client maps a
+  value it doesn't know to its own fallback.
   """
 
   def breaking_changes(old_schema, new_schema) do
@@ -42,6 +44,7 @@ defmodule MicaBff.Compat do
   end
 
   defp type_changes(_block, %{type: type}, %{type: type}), do: []
+  defp type_changes(_block, %{type: {:enum, _}}, %{type: {:enum, _}}), do: []
 
   defp type_changes(block, old_field, new_field) do
     [

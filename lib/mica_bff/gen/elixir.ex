@@ -6,7 +6,8 @@ defmodule MicaBff.Gen.Elixir do
   given): a struct with the required fields enforced, a typespec, and `to_map/1`,
   which returns the wire shape `%{"type" => ..., "props" => ...}` for any JSON
   library (mica uses Jason). Optional props that are `nil` are left out, as ADR
-  0001 requires; `""`, `0`, `false`, `[]` and `%{}` are values and are sent.
+  0001 requires; `""`, `0`, `false`, `[]` and `%{}` are values and are sent. An
+  enum prop is an atom in the struct and its name on the wire; a list is a list.
 
   The namespace module itself (in `_spec.ex`, a name no block file can have)
   lists the spec's pages: `pages/0` returns `[%{name: :home, path: "/bff/page/home"}]`.
@@ -45,7 +46,7 @@ defmodule MicaBff.Gen.Elixir do
     keys = Enum.map(fields, & &1.name)
     {required, optional} = Enum.split_with(fields, & &1.required)
     types = Enum.map_join(fields, ", ", &"#{&1.name}: #{type(&1)}")
-    pairs = &Enum.map_join(&1, ", ", fn %{name: key} -> ~s("#{key}" => block.#{key}) end)
+    pairs = &Enum.map_join(&1, ", ", fn field -> ~s("#{field.name}" => #{value(field)}) end)
     var = if keys == [], do: "_block", else: "block"
 
     props =
@@ -74,8 +75,19 @@ defmodule MicaBff.Gen.Elixir do
     |> Kernel.<>("\n")
   end
 
-  defp type(%{type: type, required: true}), do: @types[type]
-  defp type(%{type: type}), do: "#{@types[type]} | nil"
+  defp type(%{required: true} = field), do: base_type(field.type)
+  defp type(field), do: "#{base_type(field.type)} | nil"
+
+  defp base_type({:enum, values}), do: Enum.map_join(values, " | ", &inspect/1)
+  defp base_type({:list, type}), do: "[#{@types[type]}]"
+  defp base_type(type), do: @types[type]
+
+  defp value(%{name: name, type: {:enum, _}, required: true}), do: "Atom.to_string(block.#{name})"
+
+  defp value(%{name: name, type: {:enum, _}}),
+    do: "block.#{name} && Atom.to_string(block.#{name})"
+
+  defp value(%{name: name}), do: "block.#{name}"
 
   # Not inspect/1: its default limit truncates large terms to `...`, which doesn't compile.
   defp literal(term), do: term |> Macro.escape() |> Macro.to_string()

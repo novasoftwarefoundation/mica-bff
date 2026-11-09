@@ -4,9 +4,36 @@ defmodule MicaBff.Gen.SwiftTest do
   @moduletag :tmp_dir
 
   test "block names Swift or the generated code reserve are refused" do
-    for name <- [:block, :unknown, :self, :type, :protocol, :any, :swift, :coding_keys] do
+    for name <- [
+          :block,
+          :unknown,
+          :self,
+          :type,
+          :protocol,
+          :any,
+          :swift,
+          :coding_keys,
+          :lossy_list
+        ] do
       assert_raise ArgumentError, ~r/is reserved by Swift or the generated code/, fn ->
         MicaBff.Gen.Swift.generate(%{blocks: [%{name: name, fields: []}]}, "BFF")
+      end
+    end
+  end
+
+  test "enum fields whose type would shadow Swift, the generated code or the namespace are refused" do
+    for {name, namespace} <- [self: "BFF", coding_keys: "BFF", api: "Api"] do
+      schema = %{
+        blocks: [
+          %{
+            name: :badge,
+            fields: [%{name: name, type: {:enum, [:a]}, required: false, fallback: :a}]
+          }
+        ]
+      }
+
+      assert_raise ArgumentError, ~r/is reserved by Swift or the generated code/, fn ->
+        MicaBff.Gen.Swift.generate(schema, namespace)
       end
     end
   end
@@ -72,6 +99,45 @@ defmodule MicaBff.Gen.SwiftTest do
               BFF.Block.unknown(type: "row_item")),
         check("block named bool", #"{"type": "bool", "props": {"x": "y"}}"#, BFF.Block.bool(.init(x: "y"))),
         check("block named decoder", #"{"type": "decoder", "props": {"x": "y"}}"#, BFF.Block.decoder(.init(x: "y"))),
+    ]
+    """)
+  end
+
+  @tag :swift
+  test "an unknown enum value becomes the fallback; a list drops the elements that don't decode",
+       %{tmp_dir: dir} do
+    enum = {:enum, [:success, :in_progress, :default]}
+
+    schema = %{
+      blocks: [
+        %{
+          name: :badge,
+          fields: [
+            %{name: :tone, type: enum, required: true, fallback: :default},
+            %{name: :status, type: enum, required: false, fallback: :success},
+            %{name: :tags, type: {:list, :string}, required: false},
+            %{name: :counts, type: {:list, :integer}, required: true}
+          ]
+        }
+      ]
+    }
+
+    run_swift!(dir, schema, """
+    [
+        check("all props", #"{"type": "badge", "props": {"tone": "in_progress", "status": "default", "tags": ["a"], "counts": [1, 2]}}"#,
+              BFF.Block.badge(.init(tone: .inProgress, status: .default, tags: ["a"], counts: [1, 2]))),
+        check("unknown values", #"{"type": "badge", "props": {"tone": "sparkly", "status": "new", "counts": []}}"#,
+              BFF.Block.badge(.init(tone: .default, status: .success, tags: nil, counts: []))),
+        check("wrong type for an optional enum", #"{"type": "badge", "props": {"tone": "success", "status": 1, "counts": []}}"#,
+              BFF.Block.badge(.init(tone: .success, status: nil, tags: nil, counts: []))),
+        check("wrong type for a required enum", #"{"type": "badge", "props": {"tone": 1, "counts": []}}"#,
+              BFF.Block.unknown(type: "badge")),
+        check("elements that don't decode", #"{"type": "badge", "props": {"tone": "success", "tags": ["a", 1, null, {"b": 2}, [3], "c"], "counts": [1, "2", 1.5, 3]}}"#,
+              BFF.Block.badge(.init(tone: .success, status: nil, tags: ["a", "c"], counts: [1, 3]))),
+        check("wrong type for an optional list", #"{"type": "badge", "props": {"tone": "success", "tags": "a", "counts": []}}"#,
+              BFF.Block.badge(.init(tone: .success, status: nil, tags: nil, counts: []))),
+        check("wrong type for a required list", #"{"type": "badge", "props": {"tone": "success", "counts": {"a": 1}}}"#,
+              BFF.Block.unknown(type: "badge")),
     ]
     """)
   end
