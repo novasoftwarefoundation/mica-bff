@@ -19,7 +19,7 @@ defmodule Mix.Tasks.Bff.Gen.Swift do
     namespace = opts[:namespace] || @default_namespace
 
     File.mkdir_p!(out)
-    source = MicaBff.Gen.Swift.generate(MicaBff.Blocks.__schema__(), namespace)
+    source = MicaBff.Gen.Swift.generate(MicaBff.Spec.__schema__(), namespace)
     MicaBff.Gen.write!(Path.join(out, "#{namespace}.swift"), source)
   end
 end

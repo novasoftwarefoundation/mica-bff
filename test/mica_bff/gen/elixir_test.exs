@@ -4,7 +4,7 @@ defmodule MicaBff.Gen.ElixirTest do
   setup_all do
     namespace = "MicaBffTest.Gen#{System.unique_integer([:positive])}"
 
-    for {_file, source} <- MicaBff.Gen.Elixir.generate(MicaBff.Blocks.__schema__(), namespace),
+    for {_file, source} <- MicaBff.Gen.Elixir.generate(MicaBff.Spec.__schema__(), namespace),
         do: Code.compile_string(source)
 
     %{namespace: namespace}
@@ -34,7 +34,7 @@ defmodule MicaBff.Gen.ElixirTest do
   end
 
   test "the namespace module lists the spec's pages", %{namespace: ns} do
-    assert Module.concat([ns]).pages() == MicaBff.Blocks.__schema__().pages
+    assert Module.concat([ns]).pages() == MicaBff.Spec.__schema__().pages
   end
 
   test "a catalogue beyond inspect's limit is generated whole" do

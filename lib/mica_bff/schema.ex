@@ -1,8 +1,8 @@
 defmodule MicaBff.Schema do
   @moduledoc """
   The schema of the BFF spec, written as a DSL. It plays the role an XSD plays
-  for XML: the macros define what a valid block catalogue is, and a module that
-  `use`s them (`MicaBff.Blocks`) is the catalogue.
+  for XML: the macros define what a valid spec is, and the modules that `use`
+  them (`MicaBff.Blocks`, `MicaBff.Pages`) are the spec, composed by `MicaBff.Spec`.
 
       defmodule MyBlocks do
         use MicaBff.Schema
