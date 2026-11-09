@@ -1,8 +1,8 @@
 defmodule MicaBff.Schema do
   @moduledoc """
   The schema of the BFF spec, written as a DSL. It plays the role an XSD plays
-  for XML: the macros define what a valid block catalogue is, and a module that
-  `use`s them (`MicaBff.Blocks`) is the catalogue.
+  for XML: the macros define what a valid spec is, and the modules that `use`
+  them (`MicaBff.Blocks`, `MicaBff.Pages`) are the spec, composed by `MicaBff.Spec`.
 
       defmodule MyBlocks do
         use MicaBff.Schema
@@ -17,19 +17,27 @@ defmodule MicaBff.Schema do
   - `field` declares a prop: a snake_case name, a primitive type (`:string`,
     `:integer`, `:float`, `:boolean`) and `required: true | false` (default
     `false`). Never a block: blocks have no children, a page is a flat list of blocks.
+    Two more options, both a literal `"major.minor.patch"` spec version (the git tag
+    without its `v`) and left out of `__schema__/0` when unset: `since:` (the version
+    that added the field) and `deprecated:` (the version that deprecated it, not
+    before `since:`).
+  - `defpage` declares a page the BFF serves: always a GET at `/bff/page/<name>`
+    that returns a flat list of blocks (`defpage :home` is `GET /bff/page/home`).
 
   Every mistake fails at compile time and points at its line: an unknown type or
   option, a name that isn't a snake_case atom, a duplicate name, a block used as
-  a field type or named after a primitive, a `field` outside a `defblock`, and a
-  `defblock` inside another one. Generators read `__schema__/0`, never the source.
+  a field type or named after a primitive, a `field` outside a `defblock`, a
+  `defblock` or `defpage` inside a `defblock`, and a malformed or out-of-order
+  version. Generators read `__schema__/0`, never the source.
   """
 
   @primitives [:string, :integer, :float, :boolean]
 
   defmacro __using__(_opts) do
     quote do
-      import MicaBff.Schema, only: [defblock: 2, field: 2, field: 3]
+      import MicaBff.Schema, only: [defblock: 2, defpage: 1, field: 2, field: 3]
       Module.register_attribute(__MODULE__, :mica_bff_blocks, accumulate: true)
+      Module.register_attribute(__MODULE__, :mica_bff_pages, accumulate: true)
       @before_compile MicaBff.Schema
     end
   end
@@ -68,15 +76,22 @@ defmodule MicaBff.Schema do
     unless Keyword.keyword?(opts), do: fail.(": options must be a literal keyword list")
 
     opts =
-      case Keyword.validate(opts, required: false) do
+      case Keyword.validate(opts, required: false, since: nil, deprecated: nil) do
         {:ok, opts} ->
           opts
 
         {:error, unknown} ->
-          fail.(" has unknown option(s) #{inspect(unknown)}; allowed: [:required]")
+          fail.(
+            " has unknown option(s) #{inspect(unknown)}; allowed: [:required, :since, :deprecated]"
+          )
       end
 
     unless is_boolean(opts[:required]), do: fail.(": required must be true or false")
+
+    check_version!(:since, opts[:since], fail)
+    check_version!(:deprecated, opts[:deprecated], fail)
+    check_version_order!(opts[:since], opts[:deprecated], fail)
+    versions = for key <- [:since, :deprecated], version = opts[key], do: {key, version}
 
     quote do
       unless Module.get_attribute(__MODULE__, :mica_bff_open_block) do
@@ -88,11 +103,28 @@ defmodule MicaBff.Schema do
       end
 
       @mica_bff_fields %{
+        unquote_splicing(versions),
         name: unquote(name),
         type: unquote(type),
         required: unquote(opts[:required]),
         line: unquote(line)
       }
+    end
+  end
+
+  defmacro defpage(name) do
+    line = __CALLER__.line
+
+    quote do
+      if open = Module.get_attribute(__MODULE__, :mica_bff_open_block) do
+        MicaBff.Schema.__fail__(
+          __ENV__.file,
+          unquote(line),
+          "defpage #{inspect(unquote(name))} inside defblock #{inspect(open)}"
+        )
+      end
+
+      @mica_bff_pages %{name: unquote(name), line: unquote(line)}
     end
   end
 
@@ -102,20 +134,32 @@ defmodule MicaBff.Schema do
 
   defmacro __before_compile__(env) do
     blocks = env.module |> Module.get_attribute(:mica_bff_blocks) |> Enum.reverse()
+    pages = env.module |> Module.get_attribute(:mica_bff_pages) |> Enum.reverse()
     validate!(blocks, env.file)
+    validate_pages!(pages, env.file)
 
-    # Line numbers are only for error messages; generators get the plain catalogue.
+    # Line numbers are only for error messages; generators get the plain spec.
     schema = %{
       blocks:
         for block <- blocks do
           %{name: block.name, fields: Enum.map(block.fields, &Map.delete(&1, :line))}
-        end
+        end,
+      pages: for(page <- pages, do: %{name: page.name, path: "/bff/page/#{page.name}"})
     }
 
     quote do
-      @doc "The block catalogue as plain data, for generators and validation."
+      @doc "The spec as plain data (blocks and pages), for generators and validation."
       def __schema__, do: unquote(Macro.escape(schema))
     end
+  end
+
+  defp validate_pages!(pages, file) do
+    Enum.reduce(pages, MapSet.new(), fn %{name: name, line: line}, seen ->
+      fail = &__fail__(file, line, &1)
+      check_name!(name, "page", fail)
+      if name in seen, do: fail.("page #{inspect(name)} is defined twice")
+      MapSet.put(seen, name)
+    end)
   end
 
   # Blocks have no children: a page is a flat list of blocks, so no field may hold a block.
@@ -156,6 +200,29 @@ defmodule MicaBff.Schema do
 
       MapSet.put(seen, name)
     end)
+  end
+
+  defp check_version!(_key, nil, _fail), do: :ok
+
+  defp check_version!(key, version, fail) do
+    unless is_binary(version) and Regex.match?(~r/\A\d+\.\d+\.\d+\z/, version) do
+      fail.(~s(: #{key} must be a literal version like "0.2.0", got #{Macro.to_string(version)}))
+    end
+  end
+
+  defp check_version_order!(nil, _deprecated, _fail), do: :ok
+  defp check_version_order!(_since, nil, _fail), do: :ok
+
+  defp check_version_order!(since, deprecated, fail) do
+    if version_tuple(deprecated) < version_tuple(since),
+      do: fail.(": deprecated #{deprecated} is before since #{since}")
+  end
+
+  defp version_tuple(version) do
+    version
+    |> String.split(".")
+    |> Enum.map(&String.to_integer/1)
+    |> List.to_tuple()
   end
 
   # Names become wire keys and identifiers in generated code.

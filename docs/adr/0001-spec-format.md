@@ -21,16 +21,16 @@ The board asked to research a schema format, with XSD-style contract validation 
 | Layer | What | Where |
 |---|---|---|
 | Schema | What a valid spec is: the DSL (`defblock`, `field`), the primitive types, the rules. The role an XSD plays for XML. | `MicaBff.Schema` |
-| Block catalogue | The blocks themselves, written with the schema DSL | `MicaBff.Blocks` (`__schema__/0` returns it as data) |
-| Pages | The pages the BFF serves (`defpage`) | later |
+| Block catalogue | The blocks themselves, written with the schema DSL | `MicaBff.Blocks` |
+| Pages | The pages the BFF serves (`defpage`) | `MicaBff.Pages` (amended 2026-11-05) |
 | Protocol | The other calls: boot, form submission (`defendpoint`) | later |
 | Generated code | Client code, generated from the above; server code, defined from it at compile time | next-ios; mica, by a macro |
 
 Split the spec into two problems (Melle, 2026-10-27):
 
-1. **Data model**: an Elixir DSL with macros. The schema defines what a valid spec is, like an XSD for XML; the module that uses it (`MicaBff.Blocks`) is the spec, like the XML document.
+1. **Data model**: an Elixir DSL with macros. The schema defines what a valid spec is, like an XSD for XML; the modules that use it are the spec, like the XML document: one per kind (`MicaBff.Blocks`, `MicaBff.Pages`), composed by `MicaBff.Spec`, whose `__schema__/0` returns the whole spec as data (amended 2026-11-05).
    - `defblock` (now): a block the BFF sends and clients render.
-   - `defpage` (later): a page the BFF serves. Always a GET that returns a list of blocks, at `/bff/page/<page>`: the path follows from the page name (`defpage :home` → `GET /bff/page/home`), singular because a request fetches one page. The DSL expands it to an endpoint, so generated code has one list of endpoints and one network client. These requests come from a separate BFF system in mica, not from the existing LiveView routes.
+   - `defpage` (now, amended 2026-11-04): a page the BFF serves. Always a GET that returns `{"blocks": [...]}`, at `/bff/page/<page>`: the path follows from the page name (`defpage :home` → `GET /bff/page/home`), singular because a request fetches one page. `__schema__/0` lists the pages with their paths, and the Elixir macro gives the server `pages/0` on the namespace module, so the BFF serves exactly the spec's pages. The Swift generator doesn't read pages yet; the client's router gets them when it needs to recognise BFF URLs. These requests come from a separate BFF system in mica, not from the existing LiveView routes.
    - `defendpoint` (later): every other call (boot, form submission) with its method, path, request body and response.
 
    Page and endpoint stay separate concepts. A `kind: :page` next to `:get`/`:post` would mix how a request travels (method) with what it returns: a page is always a GET with blocks, and a form POST can also answer with blocks.
@@ -61,7 +61,8 @@ Amended 2026-11-03: `mica` used to get generated code committed by CI as well. E
 - A field is deprecated before it is removed, and removed only after the minimum app version no longer reads it.
 - Unknown enum values map to a fallback that the enum declares, once enums exist.
 - The spec version is the git tag (`v0.1.0`, …). CI compares the block catalogue with the last tag and fails on a breaking change.
-- Every BFF request carries the spec version the app implements, so the BFF can answer with blocks that version can render (content negotiation; part of the protocol, `defpage`/`defendpoint`).
+- A field records its versions with `since:` and `deprecated:` (amended 2026-11-05). `mix bff.compat` enforces the rules above in CI; a field that was deprecated in the last tag may be removed without failing. CI only checks that deprecation: "removed only after the minimum app version no longer reads it" stays a human check.
+- Every BFF request carries the spec version the app implements, so the BFF can answer with blocks that version can render (content negotiation; part of the protocol, `defpage`/`defendpoint`). It travels in the request header `x-bff-spec` (for example `x-bff-spec: 0.1.0`; amended 2026-11-04). Until the first breaking change the BFF only records it and serves the same blocks to every version.
 
 ## Alternatives
 
@@ -75,7 +76,7 @@ Amended 2026-11-03: `mica` used to get generated code committed by CI as well. E
 ## Consequences
 
 - One language for the spec, the generators and the server; generators get the full spec as data, without parsing a schema language.
-- A mistake in the spec fails at compile time and points at its line: an unknown type or option, a name that isn't a snake_case atom, a duplicate name, a block used as a field or named after a primitive, a `field` outside a `defblock`, a `defblock` inside another.
+- A mistake in the spec fails at compile time and points at its line: an unknown type or option, a name that isn't a snake_case atom, a duplicate name, a block used as a field or named after a primitive, a `field` outside a `defblock`, a `defblock` inside another, a malformed or out-of-order version.
 - Payload validation is not built yet. A validator against `__schema__/0`, plus example payloads per block that the generated server and client code must encode and decode, is planned as the contract validation work. Until then the rules above are prose.
 - Editing the spec means editing Elixir, also for iOS developers. If that becomes a problem, a docs generator generates the spec as Markdown.
 - A consumer that needs a standard schema (Android tooling, external parties) gets one more generator that exports JSON Schema from the same data.

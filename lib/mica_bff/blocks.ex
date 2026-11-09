@@ -1,7 +1,7 @@
 defmodule MicaBff.Blocks do
   @moduledoc """
-  The block catalogue: every block the BFF can send and every client can render.
-  On the wire a block is `{"type": "section", "props": {...}}`.
+  Every block the BFF can send and every client can render, half of the spec
+  (`MicaBff.Spec`). On the wire a block is `{"type": "section", "props": {...}}`.
   """
   use MicaBff.Schema
 

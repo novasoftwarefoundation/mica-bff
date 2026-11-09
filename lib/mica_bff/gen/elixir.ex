@@ -4,15 +4,17 @@ defmodule MicaBff.Gen.Elixir do
   it, the way `Prism.Generator.Phoenix` defines components:
 
       defmodule Systems.BFF.Blocks do
-        use MicaBff.Gen.Elixir, spec: MicaBff.Blocks
+        use MicaBff.Gen.Elixir, spec: MicaBff.Spec
       end
 
   This defines `Systems.BFF.Blocks.Section` and so on: a struct with the required
   fields enforced, a typespec, and `to_map/1`, which returns the wire shape
   `%{"type" => ..., "props" => ...}` for any JSON library (mica uses Jason).
   Optional props that are `nil` are left out, as ADR 0001 requires; `""`, `0`,
-  `false`, `[]` and `%{}` are values and are sent. The defined modules call nothing
-  in mica-bff, so an app can depend on it with `runtime: false`.
+  `false`, `[]` and `%{}` are values and are sent. The module that uses it gets
+  `pages/0`, the spec's pages: `[%{name: :home, path: "/bff/page/home"}]`. The
+  defined modules call nothing in mica-bff, so an app can depend on it with
+  `runtime: false`.
   """
 
   @types %{
@@ -24,11 +26,18 @@ defmodule MicaBff.Gen.Elixir do
 
   defmacro __using__(opts) do
     spec = spec!(opts[:spec], __CALLER__)
-    modules = Enum.map(spec.__schema__().blocks, &block_module(&1, __CALLER__.module))
+    schema = spec.__schema__()
+    modules = Enum.map(schema.blocks, &block_module(&1, __CALLER__.module))
+    pages = Map.get(schema, :pages, [])
 
     # A compile-time dependency: this module recompiles when the spec changes.
     quote do
       require unquote(spec)
+
+      @doc "The pages the BFF serves, in spec order: each is a GET at its path that returns a flat list of blocks."
+      @spec pages() :: [%{name: atom, path: String.t()}]
+      def pages, do: unquote(Macro.escape(pages))
+
       unquote_splicing(modules)
     end
   end
@@ -37,7 +46,7 @@ defmodule MicaBff.Gen.Elixir do
     MicaBff.Schema.__fail__(
       env.file,
       env.line,
-      "use MicaBff.Gen.Elixir needs spec: MicaBff.Blocks"
+      "use MicaBff.Gen.Elixir needs spec: MicaBff.Spec"
     )
   end
 
@@ -52,7 +61,7 @@ defmodule MicaBff.Gen.Elixir do
   end
 
   defp not_a_spec!(ast, env) do
-    message = "spec: #{Macro.to_string(ast)} is not a spec (a module that uses MicaBff.Schema)"
+    message = "spec: #{Macro.to_string(ast)} is not a spec (a module with __schema__/0)"
     MicaBff.Schema.__fail__(env.file, env.line, message)
   end
 

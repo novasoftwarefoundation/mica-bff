@@ -48,8 +48,8 @@ defmodule MicaBff.Gen.ElixirTest do
   end
 
   test "every block gets its module, with the block's fields as struct keys" do
-    {namespace, compiled} = compile_use(", spec: MicaBff.Blocks")
-    blocks = MicaBff.Blocks.__schema__().blocks
+    {namespace, compiled} = compile_use(", spec: MicaBff.Spec")
+    blocks = MicaBff.Spec.__schema__().blocks
     expected = [namespace | Enum.map(blocks, &block_module(namespace, &1))]
 
     assert compiled |> Keyword.keys() |> Enum.sort() == Enum.sort(expected)
@@ -61,7 +61,7 @@ defmodule MicaBff.Gen.ElixirTest do
 
   # Every section prop is optional, so the fixtures also check that nil props are left out.
   test "every fixture encodes back to itself through its module" do
-    ns = namespace_for(MicaBff.Blocks)
+    ns = namespace_for(MicaBff.Spec)
 
     for path <- Path.wildcard("fixtures/*.json") do
       %{"type" => type, "props" => props} = fixture = path |> File.read!() |> JSON.decode!()
@@ -105,20 +105,25 @@ defmodule MicaBff.Gen.ElixirTest do
   end
 
   test "use without spec fails with the file and line" do
-    message = ~r/use_test\.exs:2: use MicaBff\.Gen\.Elixir needs spec: MicaBff\.Blocks/
+    message = ~r/use_test\.exs:2: use MicaBff\.Gen\.Elixir needs spec: MicaBff\.Spec/
 
     assert_raise CompileError, message, fn -> compile_use("") end
   end
 
   test "use with a module that is not a spec fails with the file and line" do
     message =
-      ~r/use_test\.exs:2: spec: .*NotASpec is not a spec \(a module that uses MicaBff\.Schema\)/
+      ~r/use_test\.exs:2: spec: .*NotASpec is not a spec \(a module with __schema__\/0\)/
 
     assert_raise CompileError, message, fn -> compile_use(", spec: #{inspect(NotASpec)}") end
   end
 
+  test "the module that uses it lists the spec's pages; a spec without pages has none" do
+    assert namespace_for(MicaBff.Spec).pages() == MicaBff.Spec.__schema__().pages
+    assert namespace_for(Spec).pages() == []
+  end
+
   test "the defined modules call nothing in mica-bff at runtime" do
-    {_namespace, compiled} = compile_use(", spec: MicaBff.Blocks")
+    {_namespace, compiled} = compile_use(", spec: MicaBff.Spec")
     imports = Enum.flat_map(compiled, fn {_module, binary} -> runtime_imports(binary) end)
 
     refute Enum.any?(imports, &String.starts_with?(&1, "Elixir.MicaBff"))

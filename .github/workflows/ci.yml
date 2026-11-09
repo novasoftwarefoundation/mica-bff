@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: erlef/setup-beam@v1
         with:
           version-file: .tool-versions
@@ -17,6 +19,7 @@ jobs:
       - run: mix compile --warnings-as-errors
       - run: mix format --check-formatted
       - run: mix test
+      - run: mix bff.compat
 
   sync:
     needs: test

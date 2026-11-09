@@ -21,7 +21,7 @@ defmodule MicaBff.Gen.SwiftTest do
     plain = "fixtures/section_plain.json" |> File.read!() |> String.trim()
     body = "fixtures/section_body.json" |> File.read!() |> String.trim()
 
-    run_swift!(dir, MicaBff.Blocks.__schema__(), """
+    run_swift!(dir, MicaBff.Spec.__schema__(), """
     [
         check("tappable", #"#{tappable}"#,
               BFF.Block.section(.init(title: "Available studies", body: "Studies you can take part in right now.", to: "/pool/1/marketplace"))),
