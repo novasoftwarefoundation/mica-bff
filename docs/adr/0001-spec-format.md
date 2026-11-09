@@ -52,7 +52,7 @@ The Swift generator is a Mix task in this repo. It reads the block catalogue as 
 
 `mica` depends on this repo at compile time at a pinned ref. A macro defines the block modules while it compiles, and the reviewable diff there is the ref bump.
 
-Amended 2026-11-03: `mica` used to get generated code committed by CI as well. Elixir can read the spec directly, so copying it into `mica` added a PR and no value.
+Amended 2026-11-09: `mica` used to get generated code committed by CI as well. Elixir can read the spec directly, so copying it into `mica` added a PR and no value.
 
 ### Compatibility
 
