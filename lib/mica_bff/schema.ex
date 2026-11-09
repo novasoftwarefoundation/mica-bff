@@ -17,14 +17,18 @@ defmodule MicaBff.Schema do
   - `field` declares a prop: a snake_case name, a primitive type (`:string`,
     `:integer`, `:float`, `:boolean`) and `required: true | false` (default
     `false`). Never a block: blocks have no children, a page is a flat list of blocks.
+    Two more options, both a literal `"major.minor.patch"` spec version (the git tag
+    without its `v`) and left out of `__schema__/0` when unset: `since:` (the version
+    that added the field) and `deprecated:` (the version that deprecated it, not
+    before `since:`).
   - `defpage` declares a page the BFF serves: always a GET at `/bff/page/<name>`
     that returns a flat list of blocks (`defpage :home` is `GET /bff/page/home`).
 
   Every mistake fails at compile time and points at its line: an unknown type or
   option, a name that isn't a snake_case atom, a duplicate name, a block used as
-  a field type or named after a primitive, a `field` outside a `defblock`, and a
-  `defblock` or `defpage` inside a `defblock`. Generators read `__schema__/0`,
-  never the source.
+  a field type or named after a primitive, a `field` outside a `defblock`, a
+  `defblock` or `defpage` inside a `defblock`, and a malformed or out-of-order
+  version. Generators read `__schema__/0`, never the source.
   """
 
   @primitives [:string, :integer, :float, :boolean]
@@ -72,15 +76,22 @@ defmodule MicaBff.Schema do
     unless Keyword.keyword?(opts), do: fail.(": options must be a literal keyword list")
 
     opts =
-      case Keyword.validate(opts, required: false) do
+      case Keyword.validate(opts, required: false, since: nil, deprecated: nil) do
         {:ok, opts} ->
           opts
 
         {:error, unknown} ->
-          fail.(" has unknown option(s) #{inspect(unknown)}; allowed: [:required]")
+          fail.(
+            " has unknown option(s) #{inspect(unknown)}; allowed: [:required, :since, :deprecated]"
+          )
       end
 
     unless is_boolean(opts[:required]), do: fail.(": required must be true or false")
+
+    check_version!(:since, opts[:since], fail)
+    check_version!(:deprecated, opts[:deprecated], fail)
+    check_version_order!(opts[:since], opts[:deprecated], fail)
+    versions = for key <- [:since, :deprecated], version = opts[key], do: {key, version}
 
     quote do
       unless Module.get_attribute(__MODULE__, :mica_bff_open_block) do
@@ -92,6 +103,7 @@ defmodule MicaBff.Schema do
       end
 
       @mica_bff_fields %{
+        unquote_splicing(versions),
         name: unquote(name),
         type: unquote(type),
         required: unquote(opts[:required]),
@@ -188,6 +200,29 @@ defmodule MicaBff.Schema do
 
       MapSet.put(seen, name)
     end)
+  end
+
+  defp check_version!(_key, nil, _fail), do: :ok
+
+  defp check_version!(key, version, fail) do
+    unless is_binary(version) and Regex.match?(~r/\A\d+\.\d+\.\d+\z/, version) do
+      fail.(~s(: #{key} must be a literal version like "0.2.0", got #{Macro.to_string(version)}))
+    end
+  end
+
+  defp check_version_order!(nil, _deprecated, _fail), do: :ok
+  defp check_version_order!(_since, nil, _fail), do: :ok
+
+  defp check_version_order!(since, deprecated, fail) do
+    if version_tuple(deprecated) < version_tuple(since),
+      do: fail.(": deprecated #{deprecated} is before since #{since}")
+  end
+
+  defp version_tuple(version) do
+    version
+    |> String.split(".")
+    |> Enum.map(&String.to_integer/1)
+    |> List.to_tuple()
   end
 
   # Names become wire keys and identifiers in generated code.
