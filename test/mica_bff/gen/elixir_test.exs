@@ -1,17 +1,87 @@
 defmodule MicaBff.Gen.ElixirTest do
   use ExUnit.Case, async: true
 
-  setup_all do
-    namespace = "MicaBffTest.Gen#{System.unique_integer([:positive])}"
+  import ExUnit.CaptureIO
 
-    for {_file, source} <- MicaBff.Gen.Elixir.generate(MicaBff.Spec.__schema__(), namespace),
-        do: Code.compile_string(source)
+  defmodule Spec do
+    use MicaBff.Schema
 
-    %{namespace: namespace}
+    defblock :badge do
+      field(:label, :string, required: true)
+      field(:count, :integer)
+    end
+
+    defblock :divider do
+    end
+
+    defblock :tagged do
+      field(:tone, {:enum, [:success, :in_progress]}, required: true, fallback: :success)
+      field(:status, {:enum, [:on, :off]}, fallback: :off)
+      field(:tags, {:list, :string})
+    end
+  end
+
+  defmodule NotASpec do
+  end
+
+  defp compile_use(option) do
+    namespace = "MicaBffTest.Use#{System.unique_integer([:positive])}"
+    source = "defmodule #{namespace} do\n  use MicaBff.Gen.Elixir#{option}\nend\n"
+    {Module.concat([namespace]), Code.compile_string(source, "use_test.exs")}
+  end
+
+  defp namespace_for(spec) do
+    {namespace, _modules} = compile_use(", spec: #{inspect(spec)}")
+    namespace
+  end
+
+  defp badge_props(attrs) do
+    badge = Module.concat(namespace_for(Spec), Badge)
+    badge.to_map(struct!(badge, attrs))["props"]
+  end
+
+  test "an enum is an atom in the struct and a string on the wire; a list is sent as it is" do
+    tagged = Module.concat(namespace_for(Spec), Tagged)
+
+    assert tagged.to_map(struct!(tagged, tone: :in_progress, status: :on, tags: ["a", "b"])) ==
+             %{
+               "type" => "tagged",
+               "props" => %{"tone" => "in_progress", "status" => "on", "tags" => ["a", "b"]}
+             }
+
+    assert tagged.to_map(struct!(tagged, tone: :success, tags: [])) ==
+             %{"type" => "tagged", "props" => %{"tone" => "success", "tags" => []}}
+  end
+
+  defp block_module(namespace, %{name: name}),
+    do: Module.concat(namespace, Macro.camelize(to_string(name)))
+
+  defp field_names(%{fields: fields}), do: fields |> Enum.map(& &1.name) |> Enum.sort()
+
+  defp struct_keys(module),
+    do: module |> struct() |> Map.from_struct() |> Map.keys() |> Enum.sort()
+
+  defp runtime_imports(binary) do
+    {:ok, {_module, [imports: imports]}} = :beam_lib.chunks(binary, [:imports])
+    Enum.map(imports, fn {module, _function, _arity} -> Atom.to_string(module) end)
+  end
+
+  test "every block gets its module, with the block's fields as struct keys" do
+    {namespace, compiled} = compile_use(", spec: MicaBff.Spec")
+    blocks = MicaBff.Spec.__schema__().blocks
+    expected = [namespace | Enum.map(blocks, &block_module(namespace, &1))]
+
+    assert compiled |> Keyword.keys() |> Enum.sort() == Enum.sort(expected)
+
+    for block <- blocks do
+      assert struct_keys(block_module(namespace, block)) == field_names(block)
+    end
   end
 
   # Every section prop is optional, so the fixtures also check that nil props are left out.
-  test "every fixture encodes back to itself through its generated module", %{namespace: ns} do
+  test "every fixture encodes back to itself through its module" do
+    ns = namespace_for(MicaBff.Spec)
+
     for path <- Path.wildcard("fixtures/*.json") do
       %{"type" => type, "props" => props} = fixture = path |> File.read!() |> JSON.decode!()
       module = Module.concat(ns, Macro.camelize(type))
@@ -21,66 +91,60 @@ defmodule MicaBff.Gen.ElixirTest do
     end
   end
 
-  test "required fields are enforced" do
-    schema = %{
-      blocks: [%{name: :badge, fields: [%{name: :label, type: :string, required: true}]}]
-    }
+  test "only nil optional props are left out" do
+    assert badge_props(label: "x") == %{"label" => "x"}
+    assert badge_props(label: "", count: 0) == %{"label" => "", "count" => 0}
+    assert badge_props(label: nil) == %{"label" => nil}
+  end
 
-    ns = "MicaBffTest.Required#{System.unique_integer([:positive])}"
-    {_file, source} = List.keyfind(MicaBff.Gen.Elixir.generate(schema, ns), "badge.ex", 0)
-    [{badge, _}] = Code.compile_string(source)
+  test "a block without fields encodes to empty props" do
+    divider = Module.concat(namespace_for(Spec), Divider)
+
+    assert divider.to_map(struct!(divider, [])) == %{"type" => "divider", "props" => %{}}
+  end
+
+  test "required fields are enforced" do
+    badge = Module.concat(namespace_for(Spec), Badge)
 
     assert_raise ArgumentError, ~r/:label/, fn -> struct!(badge, []) end
   end
 
-  test "an enum is an atom in the struct and a string on the wire; a list is sent as it is" do
-    schema = %{
-      blocks: [
-        %{
-          name: :badge,
-          fields: [
-            %{
-              name: :tone,
-              type: {:enum, [:success, :in_progress]},
-              required: true,
-              fallback: :success
-            },
-            %{name: :status, type: {:enum, [:on, :off]}, required: false, fallback: :off},
-            %{name: :tags, type: {:list, :string}, required: false}
-          ]
-        }
-      ]
-    }
+  test "an unknown field fails at compile time" do
+    source = "%#{inspect(namespace_for(Spec))}.Badge{nope: 1}"
 
-    ns = "MicaBffTest.Types#{System.unique_integer([:positive])}"
-    {_file, source} = List.keyfind(MicaBff.Gen.Elixir.generate(schema, ns), "badge.ex", 0)
-    [{badge, _}] = Code.compile_string(source)
-
-    assert badge.to_map(struct!(badge, tone: :in_progress, status: :on, tags: ["a", "b"])) ==
-             JSON.decode!(
-               ~s({"type": "badge", "props": {"tone": "in_progress", "status": "on", "tags": ["a", "b"]}})
-             )
-
-    assert badge.to_map(struct!(badge, tone: :success, tags: [])) ==
-             JSON.decode!(~s({"type": "badge", "props": {"tone": "success", "tags": []}}))
+    assert_raise KeyError, fn -> Code.compile_string(source) end
   end
 
-  test "the namespace module lists the spec's pages", %{namespace: ns} do
-    assert Module.concat([ns]).pages() == MicaBff.Spec.__schema__().pages
+  test "an unknown block fails at compile time" do
+    source = "%#{inspect(namespace_for(Spec))}.Nope{}"
+
+    capture_io(:stderr, fn ->
+      assert_raise CompileError, fn -> Code.compile_string(source) end
+    end)
   end
 
-  test "a catalogue beyond inspect's limit is generated whole" do
-    pages = for i <- 1..100, do: %{name: :"page_#{i}", path: "/bff/page/page_#{i}"}
-    fields = for i <- 1..100, do: %{name: :"field_#{i}", type: :string, required: true}
-    schema = %{pages: pages, blocks: [%{name: :wide, fields: fields}]}
+  test "use without spec fails with the file and line" do
+    message = ~r/use_test\.exs:2: use MicaBff\.Gen\.Elixir needs spec: MicaBff\.Spec/
 
-    ns = "MicaBffTest.Large#{System.unique_integer([:positive])}"
+    assert_raise CompileError, message, fn -> compile_use("") end
+  end
 
-    for {_file, source} <- MicaBff.Gen.Elixir.generate(schema, ns),
-        do: Code.compile_string(source)
+  test "use with a module that is not a spec fails with the file and line" do
+    message =
+      ~r/use_test\.exs:2: spec: .*NotASpec is not a spec \(a module with __schema__\/0\)/
 
-    assert Module.concat([ns]).pages() == pages
-    wide = struct!(Module.concat(ns, Wide), Map.new(fields, &{&1.name, "x"}))
-    assert map_size(Map.from_struct(wide)) == 100
+    assert_raise CompileError, message, fn -> compile_use(", spec: #{inspect(NotASpec)}") end
+  end
+
+  test "the module that uses it lists the spec's pages; a spec without pages has none" do
+    assert namespace_for(MicaBff.Spec).pages() == MicaBff.Spec.__schema__().pages
+    assert namespace_for(Spec).pages() == []
+  end
+
+  test "the defined modules call nothing in mica-bff at runtime" do
+    {_namespace, compiled} = compile_use(", spec: MicaBff.Spec")
+    imports = Enum.flat_map(compiled, fn {_module, binary} -> runtime_imports(binary) end)
+
+    refute Enum.any?(imports, &String.starts_with?(&1, "Elixir.MicaBff"))
   end
 end
