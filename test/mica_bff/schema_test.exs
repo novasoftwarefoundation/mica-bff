@@ -139,7 +139,25 @@ defmodule MicaBff.SchemaTest do
           {"defblock :a do field :x, {:list, {:enum, [:b]}} end", 3,
            ":a.x: a list holds one primitive type, got {:enum, [:b]}"},
           {"defblock :a do end\ndefblock :b do field :children, {:list, :a} end", 4,
-           ":b.children holds block :a; blocks have no children"}
+           ":b.children holds block :a; blocks have no children"},
+          # Clients name things in camelCase, where these would be the same name.
+          {"defblock :a do field :x, {:enum, [:a1, :a_1]}, fallback: :a1 end", 3,
+           ":a.x has enum values :a1 and :a_1, which clients both name a1"},
+          {"defblock :a do field :x, {:enum, [:a_b, :a__b]}, fallback: :a_b end", 3,
+           ":a.x has enum values :a_b and :a__b, which clients both name aB"},
+          {"defblock :a do\nfield :a_1, :string\nfield :a1, :string\nend", 5,
+           ":a has fields :a_1 and :a1, which clients both name a1"},
+          {"defblock :a_b do end\ndefblock :a__b do end", 4,
+           "the spec has blocks :a_b and :a__b, which clients both name aB"},
+          # nil, true and false aren't names: nil is a missing prop, and Swift has no such case.
+          {"defblock :a do field :x, {:enum, [:a, nil]}, fallback: :a end", 3,
+           "enum value name nil must be a snake_case atom other than nil, true and false"},
+          {"defblock :a do field :x, {:enum, [true, false]}, fallback: false end", 3,
+           "enum value name true must be a snake_case atom other than nil, true and false"},
+          {"defblock :a do field nil, :string end", 3,
+           "field name nil must be a snake_case atom other than nil, true and false"},
+          {"defblock :a do field :x, {:enum, [:a]}, fallback: nil end", 3,
+           ":a.x: fallback nil is not one of [:a]"}
         ] do
       error = assert_raise CompileError, fn -> compile!(body) end
       assert Exception.message(error) =~ "bad.ex:#{line}: #{message}", body
