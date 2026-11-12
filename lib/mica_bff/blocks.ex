@@ -3,10 +3,11 @@ defmodule MicaBff.Blocks do
   Every block the BFF can send and every client can render, half of the spec
   (`MicaBff.Spec`). On the wire a block is `{"type": "section", "props": {...}}`.
 
-  A destination (`to`) or an image (`image_url`, `logo_url`) is a path or an
-  absolute URL, resolved against the app's base URL. The client's router decides
-  what opens a destination (native page, BFF page or web page) and how it is
-  presented.
+  A destination (`to`) is a path (`/pool/1/marketplace`), as ADR 0001 says; an
+  image (`image_url`, `logo_url`) is a path or an absolute URL, such as a photo
+  from an image catalogue. Both are resolved against the app's base URL. The
+  client's router decides what opens a destination (native page, BFF page or web
+  page) and how it is presented.
   """
   use MicaBff.Schema
 
