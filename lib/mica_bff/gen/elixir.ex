@@ -11,7 +11,8 @@ defmodule MicaBff.Gen.Elixir do
   fields enforced, a typespec, and `to_map/1`, which returns the wire shape
   `%{"type" => ..., "props" => ...}` for any JSON library (mica uses Jason).
   Optional props that are `nil` are left out, as ADR 0001 requires; `""`, `0`,
-  `false`, `[]` and `%{}` are values and are sent. The module that uses it gets
+  `false`, `[]` and `%{}` are values and are sent. An enum prop is an atom in the
+  struct and its name on the wire; a list is a list. The module that uses it gets
   `pages/0`, the spec's pages: `[%{name: :home, path: "/bff/page/home"}]`. The
   defined modules call nothing in mica-bff, so an app can depend on it with
   `runtime: false`.
@@ -97,6 +98,7 @@ defmodule MicaBff.Gen.Elixir do
   defp block_body(name, fields) do
     keys = Enum.map(fields, & &1.name)
     required = for %{name: key, required: true} <- fields, do: key
+    enums = for %{name: key, type: {:enum, _}} <- fields, do: key
     types = Enum.map(fields, &{&1.name, type(&1)})
 
     quote do
@@ -116,11 +118,31 @@ defmodule MicaBff.Gen.Elixir do
         for {key, value} <- Map.take(block, unquote(keys)),
             value != nil or key in unquote(required),
             into: %{},
-            do: {Atom.to_string(key), value}
+            do: {Atom.to_string(key), wire(key, value)}
       end
+
+      unquote(enum_wire(enums))
+      defp wire(_key, value), do: value
     end
   end
 
-  defp type(%{type: type, required: true}), do: @types[type]
-  defp type(%{type: type}), do: quote(do: unquote(@types[type]) | nil)
+  # An enum is an atom in the struct and its name on the wire. Only blocks with an
+  # enum get this clause, so the others have no clause that can't match.
+  defp enum_wire([]), do: nil
+
+  defp enum_wire(enums) do
+    quote do
+      defp wire(key, value) when key in unquote(enums) and is_atom(value) and value != nil,
+        do: Atom.to_string(value)
+    end
+  end
+
+  defp type(%{type: type, required: true}), do: base_type(type)
+  defp type(%{type: type}), do: quote(do: unquote(base_type(type)) | nil)
+
+  defp base_type({:enum, values}),
+    do: values |> Enum.reverse() |> Enum.reduce(&quote(do: unquote(&1) | unquote(&2)))
+
+  defp base_type({:list, type}), do: quote(do: [unquote(@types[type])])
+  defp base_type(type), do: @types[type]
 end

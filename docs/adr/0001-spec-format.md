@@ -20,7 +20,7 @@ The board asked to research a schema format, with XSD-style contract validation 
 
 | Layer | What | Where |
 |---|---|---|
-| Schema | What a valid spec is: the DSL (`defblock`, `field`), the primitive types, the rules. The role an XSD plays for XML. | `MicaBff.Schema` |
+| Schema | What a valid spec is: the DSL (`defblock`, `field`), the field types (primitives, enums, lists of a primitive), the rules. The role an XSD plays for XML. | `MicaBff.Schema` |
 | Block catalogue | The blocks themselves, written with the schema DSL | `MicaBff.Blocks` |
 | Pages | The pages the BFF serves (`defpage`) | `MicaBff.Pages` (amended 2026-11-05) |
 | Protocol | The other calls: boot, form submission (`defendpoint`) | later |
@@ -41,9 +41,10 @@ Split the spec into two problems (Melle, 2026-10-27):
    - An optional prop that is `nil` is left out by the BFF; `""`, `0`, `false` and empty lists or maps are values and are sent. Clients treat a missing prop and `null` the same.
    - Clients ignore unknown keys, both next to `type`/`props` and inside `props`.
    - An `:integer` prop is a JSON number without a fraction; a `:float` prop accepts any JSON number.
+   - An enum prop (`{:enum, [:success, :in_progress]}`, amended 2026-11-09) is the value's snake_case name as a JSON string (`"in_progress"`). A list prop (`{:list, :string}`, amended 2026-11-09) is a JSON array of that primitive.
    - A destination such as `section.to` is a path (`/pool/1/marketplace`), resolved against the app's base URL for its environment. How client-only actions (log out) are expressed is decided with the first block that needs one.
 
-**Blocks have no children.** A page is a flat, ordered list of blocks; no block contains another block. A field holds a primitive, never a block, and the DSL rejects it at compile time. This keeps the generated decoding and the renderers flat, and an unknown block type only ever replaces itself with a fallback. The client knows nothing about grouping yet, so there is no header block: a `section` without `to` is a plain line of text. Nesting is revisited when a page needs it; the Pixel core set's typed children are the reference then.
+**Blocks have no children.** A page is a flat, ordered list of blocks; no block contains another block. A field holds a primitive, an enum or a list of a primitive (amended 2026-11-09), never a block or a list of blocks, and the DSL rejects that at compile time. This keeps the generated decoding and the renderers flat, and an unknown block type only ever replaces itself with a fallback. The client knows nothing about grouping yet, so there is no header block: a `section` without `to` is a plain line of text. Nesting is revisited when a page needs it; the Pixel core set's typed children are the reference then.
 
 Nested data types (a `defmodel`, e.g. an image with url, width and height) are added when a block needs one.
 
@@ -59,7 +60,8 @@ Amended 2026-11-09: `mica` used to get generated code committed by CI as well. E
 - An optional prop that fails to decode (for example, its type changed) is treated as missing: the block still renders without it.
 - New blocks and new optional props can be added at any time. A new field on an existing block is always optional, so an older server or a cached page still decodes in a newer client.
 - A field is deprecated before it is removed, and removed only after the minimum app version no longer reads it.
-- Unknown enum values map to a fallback that the enum declares, once enums exist.
+- An enum declares a fallback, one of its values (amended 2026-11-09): a client maps a value it doesn't know to it, so adding or removing an enum's values is not a breaking change. A value of another JSON type is a value that doesn't decode, as for any prop.
+- A list element that doesn't decode (a changed type, `null`) is dropped; the rest of the list stays (amended 2026-11-09). Changing a list's element type is a breaking change.
 - The spec version is the git tag (`v0.1.0`, …). CI compares the block catalogue with the last tag and fails on a breaking change.
 - A field records its versions with `since:` and `deprecated:` (amended 2026-11-05). `mix bff.compat` enforces the rules above in CI; a field that was deprecated in the last tag may be removed without failing. CI only checks that deprecation: "removed only after the minimum app version no longer reads it" stays a human check.
 - Every BFF request carries the spec version the app implements, so the BFF can answer with blocks that version can render (content negotiation; part of the protocol, `defpage`/`defendpoint`). It travels in the request header `x-bff-spec` (for example `x-bff-spec: 0.1.0`; amended 2026-11-04). Until the first breaking change the BFF only records it and serves the same blocks to every version.
@@ -76,7 +78,7 @@ Amended 2026-11-09: `mica` used to get generated code committed by CI as well. E
 ## Consequences
 
 - One language for the spec, the generators and the server; generators get the full spec as data, without parsing a schema language.
-- A mistake in the spec fails at compile time and points at its line: an unknown type or option, a name that isn't a snake_case atom, a duplicate name, a block used as a field or named after a primitive, a `field` outside a `defblock`, a `defblock` inside another, a malformed or out-of-order version.
+- A mistake in the spec fails at compile time and points at its line: an unknown type or option, a name that isn't a snake_case atom, a duplicate name, a block used as a field or named after a primitive, an enum without values or without a fallback among them, a list of anything but a primitive, a `field` outside a `defblock`, a `defblock` inside another, a malformed or out-of-order version.
 - Payload validation is not built yet. A validator against `__schema__/0`, plus example payloads per block that the generated server and client code must encode and decode, is planned as the contract validation work. Until then the rules above are prose.
 - Editing the spec means editing Elixir, also for iOS developers. If that becomes a problem, a docs generator generates the spec as Markdown.
 - A consumer that needs a standard schema (Android tooling, external parties) gets one more generator that exports JSON Schema from the same data.

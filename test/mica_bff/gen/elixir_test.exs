@@ -13,6 +13,12 @@ defmodule MicaBff.Gen.ElixirTest do
 
     defblock :divider do
     end
+
+    defblock :tagged do
+      field(:tone, {:enum, [:success, :in_progress]}, required: true, fallback: :success)
+      field(:status, {:enum, [:on, :off]}, fallback: :off)
+      field(:tags, {:list, :string})
+    end
   end
 
   defmodule NotASpec do
@@ -32,6 +38,19 @@ defmodule MicaBff.Gen.ElixirTest do
   defp badge_props(attrs) do
     badge = Module.concat(namespace_for(Spec), Badge)
     badge.to_map(struct!(badge, attrs))["props"]
+  end
+
+  test "an enum is an atom in the struct and a string on the wire; a list is sent as it is" do
+    tagged = Module.concat(namespace_for(Spec), Tagged)
+
+    assert tagged.to_map(struct!(tagged, tone: :in_progress, status: :on, tags: ["a", "b"])) ==
+             %{
+               "type" => "tagged",
+               "props" => %{"tone" => "in_progress", "status" => "on", "tags" => ["a", "b"]}
+             }
+
+    assert tagged.to_map(struct!(tagged, tone: :success, tags: [])) ==
+             %{"type" => "tagged", "props" => %{"tone" => "success", "tags" => []}}
   end
 
   defp block_module(namespace, %{name: name}),

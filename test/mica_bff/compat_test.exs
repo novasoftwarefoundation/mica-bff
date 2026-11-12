@@ -59,6 +59,25 @@ defmodule MicaBff.CompatTest do
              ["section.title: type changed from :integer to :string"]
   end
 
+  test "an enum's values and fallback may change; turning it into another type breaks" do
+    old = schema(section: [field(:tone, type: {:enum, [:a, :b]}, fallback: :a)])
+    new = schema(section: [field(:tone, type: {:enum, [:b, :c]}, fallback: :c)])
+    string = schema(section: [field(:tone)])
+
+    assert breaking_changes(old, new) == []
+
+    assert breaking_changes(old, string) ==
+             ["section.tone: type changed from {:enum, [:a, :b]} to :string"]
+  end
+
+  test "changing a list's element type breaks" do
+    strings = schema(section: [field(:tags, type: {:list, :string})])
+    integers = schema(section: [field(:tags, type: {:list, :integer})])
+
+    assert breaking_changes(strings, integers) ==
+             ["section.tags: type changed from {:list, :string} to {:list, :integer}"]
+  end
+
   test "optional to required breaks, required to optional doesn't" do
     optional = schema(section: [field(:title)])
     required = schema(section: [field(:title, required: true)])

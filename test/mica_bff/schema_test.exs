@@ -60,6 +60,28 @@ defmodule MicaBff.SchemaTest do
            ]
   end
 
+  test "an enum keeps its values in order and its fallback; a list keeps its element type" do
+    [{module, _}] =
+      compile!("""
+      defblock :a do
+        field :tone, {:enum, [:success, :in_progress, :neutral]}, required: true, fallback: :neutral
+        field :tags, {:list, :string}
+      end
+      """)
+
+    assert [%{fields: fields}] = module.__schema__().blocks
+
+    assert fields == [
+             %{
+               name: :tone,
+               type: {:enum, [:success, :in_progress, :neutral]},
+               required: true,
+               fallback: :neutral
+             },
+             %{name: :tags, type: {:list, :string}, required: false}
+           ]
+  end
+
   # The body starts at line 3 of bad.ex.
   test "mistakes fail at compile time and point at their line" do
     for {body, line, message} <- [
@@ -78,7 +100,7 @@ defmodule MicaBff.SchemaTest do
            ~s(field name "x" must be a snake_case atom)},
           {"defblock :string do end", 3, "block :string clashes with the primitive type :string"},
           {"defblock :a do field :x, :string, optional: true end", 3,
-           "field :x has unknown option(s) [:optional]; allowed: [:required, :since, :deprecated]"},
+           "field :x has unknown option(s) [:optional]; allowed: [:required, :since, :deprecated, :fallback]"},
           {~s(defblock :a do field :x, :string, required: "yes" end), 3,
            "field :x: required must be true or false"},
           {"defblock :a do field :x, :string, opts end", 3,
@@ -99,7 +121,43 @@ defmodule MicaBff.SchemaTest do
           {"defblock :a do field :x, :string, deprecated: :soon end", 3,
            ~s(field :x: deprecated must be a literal version like "0.2.0", got :soon)},
           {~s(defblock :a do\nfield :x, :string, since: "0.10.0", deprecated: "0.9.0"\nend), 4,
-           "field :x: deprecated 0.9.0 is before since 0.10.0"}
+           "field :x: deprecated 0.9.0 is before since 0.10.0"},
+          {"defblock :a do field :x, {:enum, [:a, :b]} end", 3,
+           ":a.x: an enum needs fallback: one of its values"},
+          {"defblock :a do field :x, {:enum, [:a, :b]}, fallback: :c end", 3,
+           ":a.x: fallback :c is not one of [:a, :b]"},
+          {"defblock :a do field :x, {:enum, []}, fallback: :a end", 3,
+           ":a.x: an enum needs a list of values, got []"},
+          {"defblock :a do field :x, {:enum, [:a, :InProgress]}, fallback: :a end", 3,
+           "enum value name :InProgress must be a snake_case atom"},
+          {"defblock :a do field :x, {:enum, [:a, :a]}, fallback: :a end", 3,
+           ":a.x has enum value :a twice"},
+          {"defblock :a do field :x, :string, fallback: :a end", 3,
+           ":a.x: fallback is only for an enum"},
+          {"defblock :a do field :x, {:list, {:list, :string}} end", 3,
+           ":a.x: a list holds one primitive type, got {:list, :string}"},
+          {"defblock :a do field :x, {:list, {:enum, [:b]}} end", 3,
+           ":a.x: a list holds one primitive type, got {:enum, [:b]}"},
+          {"defblock :a do end\ndefblock :b do field :children, {:list, :a} end", 4,
+           ":b.children holds block :a; blocks have no children"},
+          # Clients name things in camelCase, where these would be the same name.
+          {"defblock :a do field :x, {:enum, [:a1, :a_1]}, fallback: :a1 end", 3,
+           ":a.x has enum values :a1 and :a_1, which clients both name a1"},
+          {"defblock :a do field :x, {:enum, [:a_b, :a__b]}, fallback: :a_b end", 3,
+           ":a.x has enum values :a_b and :a__b, which clients both name aB"},
+          {"defblock :a do\nfield :a_1, :string\nfield :a1, :string\nend", 5,
+           ":a has fields :a_1 and :a1, which clients both name a1"},
+          {"defblock :a_b do end\ndefblock :a__b do end", 4,
+           "the spec has blocks :a_b and :a__b, which clients both name aB"},
+          # nil, true and false aren't names: nil is a missing prop, and Swift has no such case.
+          {"defblock :a do field :x, {:enum, [:a, nil]}, fallback: :a end", 3,
+           "enum value name nil must be a snake_case atom other than nil, true and false"},
+          {"defblock :a do field :x, {:enum, [true, false]}, fallback: false end", 3,
+           "enum value name true must be a snake_case atom other than nil, true and false"},
+          {"defblock :a do field nil, :string end", 3,
+           "field name nil must be a snake_case atom other than nil, true and false"},
+          {"defblock :a do field :x, {:enum, [:a]}, fallback: nil end", 3,
+           ":a.x: fallback nil is not one of [:a]"}
         ] do
       error = assert_raise CompileError, fn -> compile!(body) end
       assert Exception.message(error) =~ "bad.ex:#{line}: #{message}", body
