@@ -34,13 +34,22 @@ defmodule MicaBff.Blocks do
     field(:to, :string)
   end
 
-  # One reward total with its status: the label in a tag of `tone`, the amount
-  # already formatted by the server ("€ 2,50") and an optional caption under it.
-  defblock :reward_amount do
-    field(:label, :string, required: true)
-    field(:tone, @tone, fallback: :neutral)
-    field(:amount, :string, required: true)
-    field(:caption, :string)
+  # The rewards card: the user's totals per status in one card. Every amount is
+  # already formatted by the server ("€ 2,50") and has its status label; the client
+  # shows pending as warning, approved as success and rejected as danger. Rejected
+  # is left out when there is none. `notes` are lines under the totals, such as a
+  # payout being processed or the donated total.
+  defblock :rewards do
+    field(:title, :string, required: true)
+    field(:pending_label, :string, required: true)
+    field(:pending_amount, :string, required: true)
+    field(:pending_caption, :string)
+    field(:approved_label, :string, required: true)
+    field(:approved_amount, :string, required: true)
+    field(:approved_caption, :string)
+    field(:rejected_label, :string)
+    field(:rejected_amount, :string)
+    field(:notes, {:list, :string})
   end
 
   # A study in the marketplace: its image, the logo of who runs it, its themes as
