@@ -79,13 +79,24 @@ defmodule MicaBff.Gen.ElixirTest do
   end
 
   # Every section prop is optional, so the fixtures also check that nil props are left out.
+  # An enum prop goes in as an atom, as the server sets it, so its encoding is checked too.
   test "every fixture encodes back to itself through its module" do
     ns = namespace_for(MicaBff.Spec)
+    %{blocks: blocks} = MicaBff.Spec.__schema__()
 
     for path <- Path.wildcard("fixtures/*.json") do
       %{"type" => type, "props" => props} = fixture = path |> File.read!() |> JSON.decode!()
+      %{fields: fields} = Enum.find(blocks, &(to_string(&1.name) == type))
+      enums = for %{name: name, type: {:enum, _}} <- fields, do: to_string(name)
       module = Module.concat(ns, Macro.camelize(type))
-      block = struct!(module, Map.new(props, fn {k, v} -> {String.to_existing_atom(k), v} end))
+
+      block =
+        struct!(
+          module,
+          Map.new(props, fn {k, v} ->
+            {String.to_existing_atom(k), if(k in enums, do: String.to_existing_atom(v), else: v)}
+          end)
+        )
 
       assert module.to_map(block) == fixture, path
     end
