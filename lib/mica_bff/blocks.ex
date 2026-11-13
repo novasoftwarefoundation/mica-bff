@@ -8,6 +8,12 @@ defmodule MicaBff.Blocks do
   from an image catalogue. Both are resolved against the app's base URL. The
   client's router decides what opens a destination (native page, BFF page or web
   page) and how it is presented.
+
+  A page stays a flat list. `section_begin` and `section_end` group the blocks
+  between them, and groups nest. A group's look cascades as in CSS: a prop a
+  `section_begin` leaves out comes from the enclosing group, and the nearest
+  group that sets it wins. A client ignores a `section_end` without an open group
+  and closes the groups still open at the end of the page.
   """
   use MicaBff.Schema
 
@@ -24,6 +30,18 @@ defmodule MicaBff.Blocks do
     field(:to, :string)
     field(:count, :integer)
     field(:image_url, :string)
+  end
+
+  # Opens a group of the blocks up to the matching section_end. `background` is a
+  # colour token from the design (`grey6`, `primarylight`); a client draws a token
+  # it doesn't know as none. `border` draws a line around the group, as a card.
+  defblock :section_begin do
+    field(:background, :string)
+    field(:border, :boolean)
+  end
+
+  # Closes the innermost open group.
+  defblock :section_end do
   end
 
   # The one thing the user should do next, highlighted, with a button (`cta`) that
