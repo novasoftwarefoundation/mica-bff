@@ -26,50 +26,83 @@ defmodule MicaBff.Schema do
     before `since:`). `fallback:` is in `__schema__/0` only on an enum.
   - `defpage` declares a page the BFF serves: always a GET at `/bff/page/<name>`
     that returns a flat list of blocks (`defpage :home` is `GET /bff/page/home`).
+  - `defmodel` declares a nested object for endpoints, with fields like a block's.
+    A model's field may also hold a model declared before it (`field :photo, :image`)
+    or a list of one (`{:list, :image}`), so models never form a cycle. Blocks hold
+    no models: blocks have no children.
+  - `defendpoint` declares any other call: `defendpoint :save_profile, method: :post`
+    is `POST /bff/endpoint/save_profile` (`:get`, `:post`, `:put`, `:patch` or `:delete`). Inside it,
+    `request do ... end` holds the fields of the JSON object the client sends (a GET
+    has none) and `response do ... end` the fields of the JSON object the server
+    answers; each is optional and has no fields when left out. Their fields may
+    hold models, and a response field may be `:blocks`, a flat list of blocks.
 
   Every mistake fails at compile time and points at its line: an unknown type or
   option, a name that isn't a snake_case atom, a duplicate name, a block used as
   a field type or named after a primitive, an enum without values or without a
-  fallback among them, a list of anything but a primitive, a `field` outside a
-  `defblock`, a `defblock` or `defpage` inside a `defblock`, and a malformed or
-  out-of-order version. Generators read `__schema__/0`, never the source.
+  fallback among them, a list of anything but a primitive or a model, a model used
+  before it is declared, a `field` outside a `defblock`, `defmodel`, `request` or
+  `response`, a declaration inside another, a `request` or `response` outside a
+  `defendpoint` or twice in one, a GET with a request, an unknown method, and a
+  malformed or out-of-order version. Generators read `__schema__/0`, never the source.
   """
 
   @primitives [:string, :integer, :float, :boolean]
+  @methods [:get, :post, :put, :patch, :delete]
+  # Type names a block or model can't take: a field type would mean two things.
+  @type_names @primitives ++ [:blocks]
 
   defmacro __using__(_opts) do
     quote do
-      import MicaBff.Schema, only: [defblock: 2, defpage: 1, field: 2, field: 3]
+      import MicaBff.Schema,
+        only: [
+          defblock: 2,
+          defmodel: 2,
+          defpage: 1,
+          defendpoint: 3,
+          request: 1,
+          response: 1,
+          field: 2,
+          field: 3
+        ]
+
       Module.register_attribute(__MODULE__, :mica_bff_blocks, accumulate: true)
+      Module.register_attribute(__MODULE__, :mica_bff_models, accumulate: true)
       Module.register_attribute(__MODULE__, :mica_bff_pages, accumulate: true)
+      Module.register_attribute(__MODULE__, :mica_bff_endpoints, accumulate: true)
       @before_compile MicaBff.Schema
     end
   end
 
-  defmacro defblock(name, do: body) do
-    line = __CALLER__.line
+  defmacro defblock(name, do: body),
+    do: record(:defblock, :mica_bff_blocks, name, body, __CALLER__)
+
+  defmacro defmodel(name, do: body),
+    do: record(:defmodel, :mica_bff_models, name, body, __CALLER__)
+
+  defp record(kind, attribute, name, body, caller) do
+    line = caller.line
 
     quote do
-      if open = Module.get_attribute(__MODULE__, :mica_bff_open_block) do
-        MicaBff.Schema.__fail__(
-          __ENV__.file,
-          unquote(line),
-          "defblock #{inspect(unquote(name))} inside defblock #{inspect(open)}; blocks have no children"
-        )
-      end
+      MicaBff.Schema.__top_level__!(
+        __MODULE__,
+        __ENV__.file,
+        unquote(line),
+        "#{unquote(kind)} #{inspect(unquote(name))}"
+      )
 
-      Module.put_attribute(__MODULE__, :mica_bff_open_block, unquote(name))
+      Module.put_attribute(__MODULE__, :mica_bff_open, {unquote(kind), unquote(name)})
       Module.register_attribute(__MODULE__, :mica_bff_fields, accumulate: true)
       unquote(body)
 
-      @mica_bff_blocks %{
+      Module.put_attribute(__MODULE__, unquote(attribute), %{
         name: unquote(name),
         line: unquote(line),
         fields: Enum.reverse(Module.get_attribute(__MODULE__, :mica_bff_fields))
-      }
+      })
 
       Module.delete_attribute(__MODULE__, :mica_bff_fields)
-      Module.delete_attribute(__MODULE__, :mica_bff_open_block)
+      Module.delete_attribute(__MODULE__, :mica_bff_open)
     end
   end
 
@@ -109,11 +142,11 @@ defmodule MicaBff.Schema do
     extras = versions ++ fallback
 
     quote do
-      unless Module.get_attribute(__MODULE__, :mica_bff_open_block) do
+      unless MicaBff.Schema.__fields_open__?(__MODULE__) do
         MicaBff.Schema.__fail__(
           __ENV__.file,
           unquote(line),
-          "field #{inspect(unquote(name))} outside a defblock"
+          "field #{inspect(unquote(name))} outside a defblock, defmodel, request or response"
         )
       end
 
@@ -131,15 +164,78 @@ defmodule MicaBff.Schema do
     line = __CALLER__.line
 
     quote do
-      if open = Module.get_attribute(__MODULE__, :mica_bff_open_block) do
-        MicaBff.Schema.__fail__(
-          __ENV__.file,
-          unquote(line),
-          "defpage #{inspect(unquote(name))} inside defblock #{inspect(open)}"
-        )
-      end
+      MicaBff.Schema.__top_level__!(
+        __MODULE__,
+        __ENV__.file,
+        unquote(line),
+        "defpage #{inspect(unquote(name))}"
+      )
 
       @mica_bff_pages %{name: unquote(name), line: unquote(line)}
+    end
+  end
+
+  defmacro defendpoint(name, opts, do: body) do
+    line = __CALLER__.line
+    fail = &__fail__(__CALLER__.file, line, "defendpoint #{Macro.to_string(name)}#{&1}")
+
+    method =
+      with true <- Keyword.keyword?(opts),
+           {:ok, opts} <- Keyword.validate(opts, [:method]),
+           method when method in @methods <- opts[:method] do
+        method
+      else
+        _ -> fail.(": takes method: one of #{inspect(@methods)}")
+      end
+
+    quote do
+      MicaBff.Schema.__top_level__!(
+        __MODULE__,
+        __ENV__.file,
+        unquote(line),
+        "defendpoint #{inspect(unquote(name))}"
+      )
+
+      Module.put_attribute(__MODULE__, :mica_bff_open, {:defendpoint, unquote(name)})
+      Module.put_attribute(__MODULE__, :mica_bff_parts, %{})
+      unquote(body)
+
+      @mica_bff_endpoints %{
+        name: unquote(name),
+        method: unquote(method),
+        line: unquote(line),
+        parts: Module.get_attribute(__MODULE__, :mica_bff_parts)
+      }
+
+      Module.delete_attribute(__MODULE__, :mica_bff_parts)
+      Module.delete_attribute(__MODULE__, :mica_bff_open)
+    end
+  end
+
+  defmacro request(do: body), do: part(:request, body, __CALLER__)
+  defmacro response(do: body), do: part(:response, body, __CALLER__)
+
+  defp part(kind, body, caller) do
+    line = caller.line
+
+    quote do
+      MicaBff.Schema.__part__!(__MODULE__, __ENV__.file, unquote(line), unquote(kind))
+      Module.put_attribute(__MODULE__, :mica_bff_part, unquote(kind))
+      Module.register_attribute(__MODULE__, :mica_bff_fields, accumulate: true)
+      unquote(body)
+
+      Module.put_attribute(
+        __MODULE__,
+        :mica_bff_parts,
+        Map.put(
+          Module.get_attribute(__MODULE__, :mica_bff_parts),
+          unquote(kind),
+          Enum.reverse(Module.get_attribute(__MODULE__, :mica_bff_fields))
+        )
+      )
+
+      Module.delete_attribute(__MODULE__, :mica_bff_fields)
+      Module.delete_attribute(__MODULE__, :mica_bff_part)
     end
   end
 
@@ -147,26 +243,84 @@ defmodule MicaBff.Schema do
   def __fail__(file, line, description),
     do: raise(CompileError, file: file, line: line, description: description)
 
+  @doc false
+  def __top_level__!(module, file, line, what) do
+    if open = Module.get_attribute(module, :mica_bff_open),
+      do: __fail__(file, line, "#{what} inside #{describe(open)}")
+  end
+
+  @doc false
+  def __part__!(module, file, line, kind) do
+    open = Module.get_attribute(module, :mica_bff_open)
+    part = Module.get_attribute(module, :mica_bff_part)
+
+    cond do
+      not match?({:defendpoint, _}, open) ->
+        __fail__(file, line, "#{kind} outside a defendpoint")
+
+      part ->
+        __fail__(file, line, "#{kind} inside #{part}")
+
+      Map.has_key?(Module.get_attribute(module, :mica_bff_parts), kind) ->
+        __fail__(file, line, "#{describe(open)} has #{kind} twice")
+
+      true ->
+        :ok
+    end
+  end
+
+  @doc false
+  def __fields_open__?(module) do
+    Module.get_attribute(module, :mica_bff_part) != nil or
+      match?(
+        {kind, _} when kind in [:defblock, :defmodel],
+        Module.get_attribute(module, :mica_bff_open)
+      )
+  end
+
+  defp describe({kind, name}), do: "#{kind} #{inspect(name)}"
+
   defmacro __before_compile__(env) do
-    blocks = env.module |> Module.get_attribute(:mica_bff_blocks) |> Enum.reverse()
-    pages = env.module |> Module.get_attribute(:mica_bff_pages) |> Enum.reverse()
-    validate!(blocks, env.file)
+    get = &(env.module |> Module.get_attribute(&1) |> Enum.reverse())
+    blocks = get.(:mica_bff_blocks)
+    models = get.(:mica_bff_models)
+    pages = get.(:mica_bff_pages)
+    endpoints = get.(:mica_bff_endpoints)
+
+    # One `seen` across blocks, models and endpoints: in Swift and Elixir they are all
+    # types in one namespace.
+    seen = validate_blocks!(blocks, env.file)
+    seen = validate_models!(models, seen, env.file)
     validate_pages!(pages, env.file)
+    validate_endpoints!(endpoints, Enum.map(models, & &1.name), seen, env.file)
 
     # Line numbers are only for error messages; generators get the plain spec.
     schema = %{
-      blocks:
-        for block <- blocks do
-          %{name: block.name, fields: Enum.map(block.fields, &Map.delete(&1, :line))}
-        end,
-      pages: for(page <- pages, do: %{name: page.name, path: "/bff/page/#{page.name}"})
+      blocks: Enum.map(blocks, &plain_record/1),
+      pages: for(page <- pages, do: %{name: page.name, path: "/bff/page/#{page.name}"}),
+      models: Enum.map(models, &plain_record/1),
+      endpoints:
+        for %{name: name, method: method, parts: parts} <- endpoints do
+          %{
+            name: name,
+            method: method,
+            path: "/bff/endpoint/#{name}",
+            request: plain_fields(Map.get(parts, :request, [])),
+            response: plain_fields(Map.get(parts, :response, []))
+          }
+        end
     }
 
     quote do
-      @doc "The spec as plain data (blocks and pages), for generators and validation."
+      @doc "The spec as plain data (blocks, pages, models and endpoints), for generators and validation."
       def __schema__, do: unquote(Macro.escape(schema))
     end
   end
+
+  defp plain_record(%{name: name, fields: fields}),
+    do: %{name: name, fields: plain_fields(fields)}
+
+  defp plain_fields(fields), do: Enum.map(fields, &Map.delete(&1, :line))
 
   defp validate_pages!(pages, file) do
     Enum.reduce(pages, MapSet.new(), fn %{name: name, line: line}, seen ->
@@ -178,29 +332,14 @@ defmodule MicaBff.Schema do
   end
 
   # Blocks have no children: a page is a flat list of blocks, so no field may hold a block.
-  defp validate!(blocks, file) do
+  defp validate_blocks!(blocks, file) do
     block_names = Enum.map(blocks, & &1.name)
+    types = %{blocks: block_names, models: nil, all_models: [], blocks_field: false}
 
     Enum.reduce(blocks, %{}, fn %{name: name, fields: fields} = block, seen ->
       fail = &__fail__(file, block.line, &1)
-      check_name!(name, "block", fail)
-
-      if name in @primitives,
-        do: fail.("block #{inspect(name)} clashes with the primitive type #{inspect(name)}")
-
-      Enum.reduce(fields, %{}, fn field, seen_fields ->
-        fail = &__fail__(file, field.line, &1)
-        check_name!(field.name, "field", fail)
-        check_type!(name, field, block_names, fail)
-
-        unique!(
-          seen_fields,
-          field.name,
-          fail,
-          "#{inspect(name)} has field #{inspect(field.name)} twice",
-          &"#{inspect(name)} has fields #{inspect(&1)} and #{inspect(field.name)}, which clients both name #{&2}"
-        )
-      end)
+      check_record_name!(name, "block", fail)
+      validate_fields!(inspect(name), fields, types, file)
 
       unique!(
         seen,
@@ -208,6 +347,74 @@ defmodule MicaBff.Schema do
         fail,
         "#{inspect(name)} is defined twice",
         &"the spec has blocks #{inspect(&1)} and #{inspect(name)}, which clients both name #{&2}"
+      )
+    end)
+  end
+
+  # A model holds only models declared before it, so models never form a cycle.
+  defp validate_models!(models, seen, file) do
+    all = Enum.map(models, & &1.name)
+
+    {seen, _before} =
+      Enum.reduce(models, {seen, []}, fn %{name: name, fields: fields, line: line},
+                                         {seen, before} ->
+        fail = &__fail__(file, line, &1)
+        check_record_name!(name, "model", fail)
+        types = %{blocks: [], models: before, all_models: all, blocks_field: false}
+        validate_fields!(inspect(name), fields, types, file)
+        {unique_type!(seen, name, fail), [name | before]}
+      end)
+
+    seen
+  end
+
+  defp validate_endpoints!(endpoints, models, seen, file) do
+    Enum.reduce(endpoints, seen, fn %{name: name, method: method, parts: parts, line: line},
+                                    seen ->
+      fail = &__fail__(file, line, &1)
+      check_name!(name, "endpoint", fail)
+
+      if method == :get and Map.get(parts, :request, []) != [],
+        do: fail.("defendpoint #{inspect(name)}: a GET has no request body")
+
+      for {part, blocks_field} <- [request: false, response: true] do
+        types = %{blocks: [], models: models, all_models: models, blocks_field: blocks_field}
+        validate_fields!("#{inspect(name)}.#{part}", Map.get(parts, part, []), types, file)
+      end
+
+      unique_type!(seen, name, fail)
+    end)
+  end
+
+  defp unique_type!(seen, name, fail) do
+    unique!(
+      seen,
+      name,
+      fail,
+      "#{inspect(name)} is defined twice",
+      &"the spec has #{inspect(&1)} and #{inspect(name)}, which clients both name #{&2}"
+    )
+  end
+
+  defp check_record_name!(name, kind, fail) do
+    check_name!(name, kind, fail)
+
+    if name in @type_names,
+      do: fail.("#{kind} #{inspect(name)} clashes with the type #{inspect(name)}")
+  end
+
+  defp validate_fields!(owner, fields, types, file) do
+    Enum.reduce(fields, %{}, fn field, seen_fields ->
+      fail = &__fail__(file, field.line, &1)
+      check_name!(field.name, "field", fail)
+      check_type!("#{owner}.#{field.name}", field, types, fail)
+
+      unique!(
+        seen_fields,
+        field.name,
+        fail,
+        "#{owner} has field #{inspect(field.name)} twice",
+        &"#{owner} has fields #{inspect(&1)} and #{inspect(field.name)}, which clients both name #{&2}"
       )
     end)
   end
@@ -225,8 +432,10 @@ defmodule MicaBff.Schema do
     end
   end
 
-  defp check_type!(block, %{name: name, type: type} = field, block_names, fail) do
-    at = "#{inspect(block)}.#{name}"
+  # `types.models` is nil where no model may be held (blocks), else the models a field
+  # may hold; `all_models` names every model, to tell one not declared before it apart.
+  defp check_type!(at, %{type: type} = field, types, fail) do
+    element = list_element(type)
 
     cond do
       type in @primitives ->
@@ -238,11 +447,21 @@ defmodule MicaBff.Schema do
       match?({:enum, _values}, type) ->
         check_enum!(at, field, fail)
 
-      block_type(type) in block_names ->
-        fail.("#{at} holds block #{inspect(block_type(type))}; blocks have no children")
+      type == :blocks and types.blocks_field ->
+        :ok
+
+      element in types.blocks ->
+        fail.("#{at} holds block #{inspect(element)}; blocks have no children")
+
+      types.models != nil and element in types.models ->
+        :ok
+
+      element in types.all_models ->
+        fail.("#{at} holds model #{inspect(element)}, which isn't declared before it")
 
       match?({:list, _}, type) ->
-        fail.("#{at}: a list holds one primitive type, got #{inspect(elem(type, 1))}")
+        what = if types.models, do: "one primitive type or a model", else: "one primitive type"
+        fail.("#{at}: a list holds #{what}, got #{inspect(element)}")
 
       true ->
         fail.("#{at} has unknown type #{inspect(type)}")
@@ -252,8 +471,8 @@ defmodule MicaBff.Schema do
       do: fail.("#{at}: fallback is only for an enum")
   end
 
-  defp block_type({:list, block}), do: block
-  defp block_type(block), do: block
+  defp list_element({:list, element}), do: element
+  defp list_element(type), do: type
 
   # Values become wire strings and Swift cases; the fallback is what a client shows
   # for a value it doesn't know (ADR 0001).

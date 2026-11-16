@@ -24,6 +24,61 @@ defmodule MicaBff.SchemaTest do
              pages: [
                %{name: :settings, path: "/bff/page/settings"},
                %{name: :home, path: "/bff/page/home"}
+             ],
+             models: [],
+             endpoints: []
+           }
+  end
+
+  test "models and endpoints are plain data in declaration order; an endpoint's path follows from its name" do
+    [{module, _}] =
+      compile!("""
+      defmodel :image do field :url, :string, required: true end
+      defmodel :profile do
+        field :photo, :image
+        field :photos, {:list, :image}
+      end
+      defendpoint :save_profile, method: :post do
+        request do field :name, :string, required: true end
+        response do
+          field :profile, :profile, required: true
+          field :blocks, :blocks
+        end
+      end
+      defendpoint :sign_out, method: :delete do end
+      """)
+
+    assert module.__schema__() == %{
+             blocks: [],
+             pages: [],
+             models: [
+               %{name: :image, fields: [%{name: :url, type: :string, required: true}]},
+               %{
+                 name: :profile,
+                 fields: [
+                   %{name: :photo, type: :image, required: false},
+                   %{name: :photos, type: {:list, :image}, required: false}
+                 ]
+               }
+             ],
+             endpoints: [
+               %{
+                 name: :save_profile,
+                 method: :post,
+                 path: "/bff/endpoint/save_profile",
+                 request: [%{name: :name, type: :string, required: true}],
+                 response: [
+                   %{name: :profile, type: :profile, required: true},
+                   %{name: :blocks, type: :blocks, required: false}
+                 ]
+               },
+               %{
+                 name: :sign_out,
+                 method: :delete,
+                 path: "/bff/endpoint/sign_out",
+                 request: [],
+                 response: []
+               }
              ]
            }
   end
@@ -33,7 +88,9 @@ defmodule MicaBff.SchemaTest do
 
     assert module.__schema__() == %{
              blocks: [%{name: :a, fields: [%{name: :x, type: :string, required: false}]}],
-             pages: []
+             pages: [],
+             models: [],
+             endpoints: []
            }
   end
 
@@ -91,14 +148,14 @@ defmodule MicaBff.SchemaTest do
            ":a has field :x twice"},
           {"defblock :a do end\ndefblock :b do field :child, :a end", 4,
            ":b.child holds block :a; blocks have no children"},
-          {"defblock :a do\ndefblock :b do end\nend", 4,
-           "defblock :b inside defblock :a; blocks have no children"},
-          {"field :x, :string", 3, "field :x outside a defblock"},
+          {"defblock :a do\ndefblock :b do end\nend", 4, "defblock :b inside defblock :a"},
+          {"field :x, :string", 3, "field :x outside a defblock, defmodel, request or response"},
           {"defblock :SectionHeader do end", 3,
            "block name :SectionHeader must be a snake_case atom"},
           {~s(defblock :a do field "x", :string end), 3,
            ~s(field name "x" must be a snake_case atom)},
-          {"defblock :string do end", 3, "block :string clashes with the primitive type :string"},
+          {"defblock :string do end", 3, "block :string clashes with the type :string"},
+          {"defblock :blocks do end", 3, "block :blocks clashes with the type :blocks"},
           {"defblock :a do field :x, :string, optional: true end", 3,
            "field :x has unknown option(s) [:optional]; allowed: [:required, :since, :deprecated, :fallback]"},
           {~s(defblock :a do field :x, :string, required: "yes" end), 3,
@@ -157,7 +214,43 @@ defmodule MicaBff.SchemaTest do
           {"defblock :a do field nil, :string end", 3,
            "field name nil must be a snake_case atom other than nil, true and false"},
           {"defblock :a do field :x, {:enum, [:a]}, fallback: nil end", 3,
-           ":a.x: fallback nil is not one of [:a]"}
+           ":a.x: fallback nil is not one of [:a]"},
+          # Models only hold models declared before them, so they never form a cycle.
+          {"defmodel :a do field :b, :b end\ndefmodel :b do end", 3,
+           ":a.b holds model :b, which isn't declared before it"},
+          {"defmodel :a do field :children, {:list, :a} end", 3,
+           ":a.children holds model :a, which isn't declared before it"},
+          {"defmodel :a do field :x, {:list, {:list, :string}} end", 3,
+           ":a.x: a list holds one primitive type or a model, got {:list, :string}"},
+          {"defmodel :a do field :x, :blocks end", 3, ":a.x has unknown type :blocks"},
+          {"defmodel :blocks do end", 3, "model :blocks clashes with the type :blocks"},
+          {"defmodel :a do\ndefmodel :b do end\nend", 4, "defmodel :b inside defmodel :a"},
+          {"defmodel :a do end\ndefendpoint :a, method: :get do end", 4, ":a is defined twice"},
+          {"defblock :a_b do end\ndefmodel :a__b do end", 4,
+           "the spec has :a_b and :a__b, which clients both name aB"},
+          {"defendpoint :a, method: :fetch do end", 3,
+           "defendpoint :a: takes method: one of [:get, :post, :put, :patch, :delete]"},
+          {"defendpoint :a, path: \"/a\" do end", 3, "defendpoint :a: takes method: one of"},
+          {"defendpoint :A, method: :get do end", 3,
+           "endpoint name :A must be a snake_case atom"},
+          {"defendpoint :a, method: :get do request do field :x, :string end end", 3,
+           "defendpoint :a: a GET has no request body"},
+          {"defendpoint :a, method: :post do\nrequest do end\nrequest do end\nend", 5,
+           "defendpoint :a has request twice"},
+          {"defendpoint :a, method: :post do\nresponse do\nrequest do end\nend\nend", 5,
+           "request inside response"},
+          {"response do end", 3, "response outside a defendpoint"},
+          {"defblock :a do request do end end", 3, "request outside a defendpoint"},
+          {"defendpoint :a, method: :post do field :x, :string end", 3,
+           "field :x outside a defblock, defmodel, request or response"},
+          {"defendpoint :a, method: :post do defpage :b end", 3,
+           "defpage :b inside defendpoint :a"},
+          {"defendpoint :a, method: :post do request do field :x, :blocks end end", 3,
+           ":a.request.x has unknown type :blocks"},
+          {"defendpoint :a, method: :post do response do field :x, :nope end end", 3,
+           ":a.response.x has unknown type :nope"},
+          {"defendpoint :a, method: :post do response do\nfield :x, :string\nfield :x, :string\nend end",
+           5, ":a.response has field :x twice"}
         ] do
       error = assert_raise CompileError, fn -> compile!(body) end
       assert Exception.message(error) =~ "bad.ex:#{line}: #{message}", body

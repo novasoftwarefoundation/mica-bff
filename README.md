@@ -1,19 +1,37 @@
 # mica-bff
 
-The spec for the Mica backend for frontend (BFF): the blocks the server sends and the clients render, and what turns the spec into code. An Elixir server (`mica`) defines the block modules at compile time with a macro; client code for `next-ios` is generated.
+The spec for the Mica backend for frontend (BFF): the blocks the server sends and the clients render, the pages and other calls the BFF serves, and what turns the spec into code. An Elixir server (`mica`) defines the modules at compile time with a macro; client code for `next-ios` is generated.
 
-- `lib/mica_bff/schema.ex`: the schema, written as a DSL (`defblock`, `field`, `defpage`)
+- `lib/mica_bff/schema.ex`: the schema, written as a DSL (`defblock`, `field`, `defpage`, `defmodel`, `defendpoint`)
 - `lib/mica_bff/blocks.ex`: the block catalogue
 - `lib/mica_bff/pages.ex`: the pages the BFF serves
-- `lib/mica_bff/spec.ex`: the spec, blocks and pages together; the Swift generator and the Elixir macro read its `__schema__/0`
-- `lib/mica_bff/compat.ex`: what counts as a breaking change between two catalogues
-- `lib/mix/tasks/bff.compat.ex`: compares the catalogue with the last `v*` tag; CI fails on a breaking change
-- `lib/mica_bff/gen/elixir.ex`: the macro that defines the Elixir block modules
-- `lib/mix/tasks/bff.gen.swift.ex`: generates the Swift block types for next-ios
+- `lib/mica_bff/endpoints.ex`: the BFF's other calls and the models they use
+- `lib/mica_bff/spec.ex`: the spec, all of the above together; the Swift generator and the Elixir macro read its `__schema__/0`
+- `lib/mica_bff/compat.ex`: what counts as a breaking change between two specs
+- `lib/mix/tasks/bff.compat.ex`: compares the spec with the last `v*` tag; CI fails on a breaking change
+- `lib/mica_bff/gen/elixir.ex`: the macro that defines the Elixir modules
+- `lib/mix/tasks/bff.gen.swift.ex`: generates the Swift types for next-ios
 - `fixtures/`: example payloads; generated code must encode and decode them exactly
 - `docs/adr/`: decisions, starting with [0001: spec format](docs/adr/0001-spec-format.md)
 
-Blocks travel as JSON: `{"type": "section", "props": {"title": "...", "body": "...", "to": "/..."}}`. A page (`defpage :home`) is `GET /bff/page/home`, answered with `{"blocks": [...]}`; the app sends the spec version it implements in the `x-bff-spec` header.
+Blocks travel as JSON: `{"type": "section", "props": {"title": "...", "body": "...", "to": "/..."}}`. A page (`defpage :home`) is `GET /bff/page/home`, answered with `{"blocks": [...]}`. An endpoint (`defendpoint :save_profile, method: :post`) is `POST /bff/endpoint/save_profile`: the client sends its request's fields as a JSON object, the server answers its response's fields, or 422 with `{"error": "...", "errors": {"<field path>": ["..."]}}` when the request doesn't match the spec. The app sends the spec version it implements in the `x-bff-spec` header.
+
+```elixir
+defmodel :image do
+  field :url, :string, required: true
+end
+
+defendpoint :save_profile, method: :post do
+  request do
+    field :fullname, :string
+  end
+
+  response do
+    field :photo, :image
+    field :blocks, :blocks
+  end
+end
+```
 
 ```sh
 mix test   # the Swift tests need swiftc; without it they are skipped locally, never in CI
@@ -21,7 +39,8 @@ mix run -e 'IO.inspect(MicaBff.Spec.__schema__())'
 
 # fails on a breaking change against the last v* tag (or --against TAG); without a tag it passes
 mix bff.compat
-# one file, BFF.swift: enum BFF.Block (one case per block + .unknown) and a struct per block
+# one file, BFF.swift: enum BFF.Block (one case per block + .unknown), a struct per block and
+# per model, and per endpoint an enum with its method, path, Request and Response
 mix bff.gen.swift --out ../next-ios/Next/BFF
 ```
 
@@ -33,7 +52,7 @@ Depend on this repo at a pinned commit. The defined modules call nothing in mica
 {:mica_bff, github: "novasoftwarefoundation/mica-bff", ref: "<full sha>", runtime: false}
 ```
 
-Then define the block modules under a module of your own, here `Systems.BFF.Blocks.Section` and so on, each a struct with `to_map/1`; the module itself gets `pages/0`, the spec's pages:
+Then define the modules under a module of your own, here `Systems.BFF.Blocks.Section` and so on, each a struct with `to_map/1`. A model gets `to_map/1` and `from_map/1`, and an endpoint `save_profile` gets `SaveProfile.Request.from_map/1`, which checks the decoded JSON the client sent (`{:ok, request}` or `{:error, errors}`), and `SaveProfile.Response.to_map/1`. The module itself gets `pages/0`, `endpoints/0` and `endpoint_error/2`, the body of a 422:
 
 ```elixir
 defmodule Systems.BFF.Blocks do

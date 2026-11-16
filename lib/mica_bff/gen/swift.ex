@@ -2,10 +2,10 @@ defmodule MicaBff.Gen.Swift do
   @default_namespace "BFF"
 
   @moduledoc """
-  Generates one Swift file with the block catalogue as `Decodable` types under a
-  namespace (default `#{@default_namespace}`; SwiftUI already has a `Section`). One file, because
-  the next-ios Xcode project lists every file: it is added once, and new blocks
-  only change its content. The Swift itself is in `swift.swift.eex`.
+  Generates one Swift file with the spec's types under a namespace (default
+  `#{@default_namespace}`; SwiftUI already has a `Section`). One file, because the
+  next-ios Xcode project lists every file: it is added once, and a spec change only
+  changes its content. The Swift itself is in `swift.swift.eex`.
 
   - `enum Block`: one case per block plus `.unknown(type:)`. Decoding never
     fails: an unknown type, or a known block whose required props don't decode,
@@ -17,7 +17,13 @@ defmodule MicaBff.Gen.Swift do
     field (`tone` is `Tone`); a value the app doesn't know decodes to the enum's
     fallback. A list prop is a Swift array; an element that doesn't decode is
     dropped and the rest of the list stays (`LossyList`, only generated when a
-    block has a list).
+    field has a list).
+  - One `Codable` struct per model, decoded like a block.
+  - One enum per endpoint (`save_profile` is `SaveProfile`) with its `method` and
+    `path`, an `Encodable` `Request` (left out when it has no fields) and a
+    `Decodable` `Response`, decoded like a block: a required field that doesn't
+    decode fails the response. `EndpointError` decodes the body of a 422. The app
+    sends the requests with its own transport.
   - snake_case wire names map to camelCase; Swift keywords are escaped. Standard
     names are written as `Swift.String` etc., so a block named `bool` or
     `decoder` can't shadow them inside the namespace.
@@ -39,10 +45,10 @@ defmodule MicaBff.Gen.Swift do
                struct subscript typealias var break case catch continue default defer do else
                fallthrough for guard if in repeat return throw switch where while as false is nil
                self super throws true try)
-  # Block names the generated code needs itself, or that Swift reserves as type names.
-  # `swift` would shadow the Swift module; `coding_keys` the private CodingKeys in Block;
-  # `lossy_list` the list decoding helper.
-  @reserved_blocks [
+  # Type names the generated code needs itself, or that Swift reserves. `swift` would
+  # shadow the Swift module; `coding_keys` the private CodingKeys in Block;
+  # `lossy_list` and `endpoint_error` the generated helpers.
+  @reserved [
     :block,
     :unknown,
     :self,
@@ -51,62 +57,137 @@ defmodule MicaBff.Gen.Swift do
     :any,
     :swift,
     :coding_keys,
-    :lossy_list
+    :lossy_list,
+    :endpoint_error
   ]
+  @block_decoding """
+  // Required props must decode; an optional prop that doesn't decode (e.g. a changed
+  // type) becomes nil, so the block still renders (ADR 0001). In an extension, so the
+  // memberwise initializer stays available.\
+  """
+  @record_decoding """
+  // Required fields must decode; an optional field that doesn't decode becomes nil
+  // (ADR 0001). In an extension, so the memberwise initializer stays available.\
+  """
 
   EEx.function_from_file(:defp, :template, Path.join(__DIR__, "swift.swift.eex"), [:assigns])
 
   def default_namespace, do: @default_namespace
 
-  @doc "Returns the Swift source for the block catalogue."
+  @doc "Returns the Swift source for the spec's blocks, models and endpoints."
   @spec generate(map, String.t()) :: String.t()
-  def generate(%{blocks: blocks}, namespace \\ @default_namespace) do
-    for %{name: name} <- blocks, name in @reserved_blocks do
+  def generate(%{blocks: blocks} = schema, namespace \\ @default_namespace) do
+    models = Map.get(schema, :models, [])
+    endpoints = Map.get(schema, :endpoints, [])
+    model_names = Enum.map(models, & &1.name)
+
+    for {kind, records} <- [block: blocks, model: models, endpoint: endpoints],
+        %{name: name} <- records,
+        name in @reserved do
       raise ArgumentError,
-            "block #{inspect(name)} can't be generated in Swift: " <>
+            "#{kind} #{inspect(name)} can't be generated in Swift: " <>
               "#{type_name(name)} is reserved by Swift or the generated code"
     end
 
-    # An enum's type is nested in its block's struct, so there it shadows these.
-    reserved_enums = [namespace | Enum.map(@reserved_blocks, &type_name/1)]
+    blocks = Enum.map(blocks, &record(&1, namespace, model_names, :block))
+    models = Enum.map(models, &record(&1, namespace, model_names, :model))
+    endpoints = Enum.map(endpoints, &endpoint(&1, namespace, model_names))
+    records = blocks ++ models ++ Enum.flat_map(endpoints, & &1.records)
 
-    for %{name: block, fields: fields} <- blocks,
-        %{name: name, type: {:enum, _}} <- fields,
-        type_name(name) in reserved_enums do
+    # An enum's type is nested in its record's struct, so there it shadows these.
+    reserved_enums = [namespace | Enum.map(@reserved, &type_name/1)]
+
+    for %{name: record, enums: enums} <- records,
+        %{field: name, type: type} <- enums,
+        type in reserved_enums do
       raise ArgumentError,
-            "enum field #{block}.#{name} can't be generated in Swift: " <>
-              "#{type_name(name)} is reserved by Swift or the generated code"
+            "enum field #{record}.#{name} can't be generated in Swift: " <>
+              "#{type} is reserved by Swift or the generated code"
     end
 
     header =
       "// Generated by #{MicaBff.Gen.origin()} (mix bff.gen.swift). " <>
         "Do not edit: change the spec in mica-bff and regenerate."
 
-    lossy =
-      Enum.any?(blocks, fn block -> Enum.any?(block.fields, &match?({:list, _}, &1.type)) end)
-
     [
       header: header,
       namespace: namespace,
-      blocks: Enum.map(blocks, &block(&1, namespace)),
-      lossy: lossy
+      blocks: blocks,
+      structs: Enum.map(blocks ++ models, &indent(&1.source, 4)),
+      endpoints: endpoints,
+      decoders: Enum.filter(records, &(&1.decodes and &1.fields != [])),
+      lossy: Enum.any?(records, fn record -> Enum.any?(record.fields, & &1.list) end)
     ]
     |> template()
     |> String.trim_trailing()
     |> Kernel.<>("\n")
   end
 
-  defp block(%{name: name, fields: fields}, namespace) do
+  defp endpoint(%{name: name, method: method, path: path} = endpoint, namespace, models) do
+    type = type_name(name)
+    method = method |> Atom.to_string() |> String.upcase()
+    request = if endpoint.request != [], do: [{:request, endpoint.request}], else: []
+
+    records =
+      for {part, fields} <- request ++ [response: endpoint.response] do
+        %{name: "#{name}.#{part}", fields: fields}
+        |> record(namespace, models, part)
+        |> Map.put(:path, "#{type}.#{type_name(part)}")
+      end
+
     %{
       name: name,
-      type: type_name(name),
-      case: ident(name),
-      fields: Enum.map(fields, &field(&1, namespace)),
-      enums: for(%{type: {:enum, values}} = field <- fields, do: enum(field, values))
+      type: type,
+      method: method,
+      path: path,
+      records: records,
+      structs: Enum.map(records, &indent(&1.source, 8))
     }
   end
 
-  defp field(%{name: name, type: type, required: required}, namespace) do
+  # A block, model, request or response: its struct's source, and what its decoding
+  # extension needs.
+  defp record(%{name: name, fields: fields}, namespace, models, kind) do
+    {doc, type, conforms, decodes} =
+      case kind do
+        :block -> {"Block `#{name}`.", type_name(name), "Swift.Decodable", true}
+        :model -> {"Model `#{name}`.", type_name(name), "Swift.Codable", true}
+        :request -> {"What the client sends.", "Request", "Swift.Encodable", false}
+        :response -> {"What the endpoint answers.", "Response", "Swift.Decodable", true}
+      end
+
+    fields = Enum.map(fields, &field(&1, namespace, models))
+    enums = for %{enum: enum} <- fields, enum, do: enum
+
+    lines =
+      ["/// #{doc}", "struct #{type}: #{conforms}, Swift.Equatable, Swift.Sendable {"] ++
+        Enum.map(
+          fields,
+          &"    let #{&1.ident}: #{&1.swift_type}#{if &1.required, do: "", else: "?"}"
+        ) ++
+        coding_keys(fields) ++ Enum.flat_map(enums, &["" | &1.lines]) ++ ["}"]
+
+    %{
+      name: name,
+      case: ident(name),
+      type: type,
+      path: type,
+      fields: fields,
+      enums: enums,
+      decodes: decodes,
+      comment: if(kind == :block, do: @block_decoding, else: @record_decoding),
+      source: Enum.join(lines, "\n")
+    }
+  end
+
+  defp coding_keys([]), do: []
+
+  defp coding_keys(fields) do
+    ["", "    private enum CodingKeys: Swift.String, Swift.CodingKey {"] ++
+      Enum.map(fields, &"        case #{&1.key}") ++ ["    }"]
+  end
+
+  defp field(%{name: name, type: type, required: required} = field, namespace, models) do
     ident = ident(name)
     key = if camel(name) == to_string(name), do: ident, else: ~s(#{ident} = "#{name}")
 
@@ -115,11 +196,16 @@ defmodule MicaBff.Gen.Swift do
         {:enum, _} ->
           {type_name(name), type_name(name), ""}
 
-        {:list, element} ->
-          {"[#{@types[element]}]", "#{namespace}.LossyList<#{@types[element]}>", ".values"}
+        :blocks ->
+          {"[#{namespace}.Block]", "[#{namespace}.Block]", ""}
 
-        primitive ->
-          {@types[primitive], @types[primitive], ""}
+        {:list, element} ->
+          element = element_type(element, namespace, models)
+          {"[#{element}]", "#{namespace}.LossyList<#{element}>", ".values"}
+
+        type ->
+          element = element_type(type, namespace, models)
+          {element, element, ""}
       end
 
     decode =
@@ -134,10 +220,22 @@ defmodule MicaBff.Gen.Swift do
           "(try? container.decodeIfPresent(#{decode_type}.self, forKey: .#{ident}))?#{values}"
       end
 
-    %{ident: ident, key: key, swift_type: swift_type, required: required, decode: decode}
+    %{
+      ident: ident,
+      key: key,
+      swift_type: swift_type,
+      required: required,
+      decode: decode,
+      list: values != "",
+      enum: enum(field)
+    }
   end
 
-  defp enum(%{name: name, fallback: fallback}, values) do
+  defp element_type(type, namespace, models) do
+    if type in models, do: "#{namespace}.#{type_name(type)}", else: @types[type]
+  end
+
+  defp enum(%{name: name, type: {:enum, values}, fallback: fallback}) do
     cases =
       for value <- values do
         if camel(value) == to_string(value),
@@ -145,7 +243,35 @@ defmodule MicaBff.Gen.Swift do
           else: ~s(#{ident(value)} = "#{value}")
       end
 
-    %{type: type_name(name), cases: cases, fallback: ".#{ident(fallback)}"}
+    type = type_name(name)
+
+    lines =
+      ["    enum #{type}: Swift.String, Swift.Codable, Swift.Equatable, Swift.Sendable {"] ++
+        Enum.map(cases, &"        case #{&1}") ++
+        [
+          "",
+          "        /// A value this app doesn't know becomes `.#{ident(fallback)}` (ADR 0001).",
+          "        init(from decoder: any Swift.Decoder) throws {",
+          "            let value = try decoder.singleValueContainer().decode(Swift.String.self)",
+          "            self = Self(rawValue: value) ?? .#{ident(fallback)}",
+          "        }",
+          "    }"
+        ]
+
+    %{field: name, type: type, lines: lines}
+  end
+
+  defp enum(_field), do: nil
+
+  defp indent(source, spaces) do
+    prefix = String.duplicate(" ", spaces)
+
+    source
+    |> String.split("\n")
+    |> Enum.map_join("\n", fn
+      "" -> ""
+      line -> prefix <> line
+    end)
   end
 
   defp type_name(name), do: Macro.camelize(to_string(name))

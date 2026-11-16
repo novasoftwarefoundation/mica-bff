@@ -3,16 +3,17 @@ defmodule Mix.Tasks.Bff.Compat do
   @moduledoc """
       mix bff.compat [--against TAG]
 
-  Compares the block catalogue with the one at TAG, by default the last `v*` tag,
-  and fails on a breaking change (`MicaBff.Compat`). Without a `v*` tag there is
-  nothing to compare, so it passes. The old catalogue is read by running that tag
-  in a temporary git worktree, so the tag doesn't need this task.
+  Compares the spec (`MicaBff.Spec`: blocks, models and endpoints) with the one at
+  TAG, by default the last `v*` tag, and fails on a breaking change
+  (`MicaBff.Compat`). Without a `v*` tag there is nothing to compare, so it passes.
+  The old spec is read by running that tag in a temporary git worktree, so the tag
+  doesn't need this task.
   """
   use Mix.Task
 
   @requirements ["compile"]
 
-  @print_schema ~S|IO.puts("bff-schema:" <> Base.encode64(:erlang.term_to_binary(MicaBff.Blocks.__schema__())))|
+  @print_schema ~S|IO.puts("bff-schema:" <> Base.encode64(:erlang.term_to_binary(MicaBff.Spec.__schema__())))|
 
   @impl true
   def run(args) do
@@ -42,7 +43,7 @@ defmodule Mix.Tasks.Bff.Compat do
   defp compare(tag) do
     tag
     |> catalogue_at()
-    |> MicaBff.Compat.breaking_changes(MicaBff.Blocks.__schema__())
+    |> MicaBff.Compat.breaking_changes(MicaBff.Spec.__schema__())
     |> report(tag)
   end
 

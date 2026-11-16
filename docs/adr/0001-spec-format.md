@@ -23,15 +23,15 @@ The board asked to research a schema format, with XSD-style contract validation 
 | Schema | What a valid spec is: the DSL (`defblock`, `field`), the field types (primitives, enums, lists of a primitive), the rules. The role an XSD plays for XML. | `MicaBff.Schema` |
 | Block catalogue | The blocks themselves, written with the schema DSL | `MicaBff.Blocks` |
 | Pages | The pages the BFF serves (`defpage`) | `MicaBff.Pages` (amended 2026-11-05) |
-| Protocol | The other calls: boot, form submission (`defendpoint`) | later |
+| Protocol | The other calls: boot, form submission (`defendpoint`), and the nested types they use (`defmodel`) | `MicaBff.Endpoints` (amended 2026-11-16) |
 | Generated code | Client code, generated from the above; server code, defined from it at compile time | next-ios; mica, by a macro |
 
 Split the spec into two problems (Melle, 2026-10-27):
 
-1. **Data model**: an Elixir DSL with macros. The schema defines what a valid spec is, like an XSD for XML; the modules that use it are the spec, like the XML document: one per kind (`MicaBff.Blocks`, `MicaBff.Pages`), composed by `MicaBff.Spec`, whose `__schema__/0` returns the whole spec as data (amended 2026-11-05).
+1. **Data model**: an Elixir DSL with macros. The schema defines what a valid spec is, like an XSD for XML; the modules that use it are the spec, like the XML document: one per kind (`MicaBff.Blocks`, `MicaBff.Pages`, `MicaBff.Endpoints`), composed by `MicaBff.Spec`, whose `__schema__/0` returns the whole spec as data (amended 2026-11-05).
    - `defblock` (now): a block the BFF sends and clients render.
    - `defpage` (now, amended 2026-11-04): a page the BFF serves. Always a GET that returns `{"blocks": [...]}`, at `/bff/page/<page>`: the path follows from the page name (`defpage :home` → `GET /bff/page/home`), singular because a request fetches one page. `__schema__/0` lists the pages with their paths, and the Elixir macro gives the server `pages/0` on the namespace module, so the BFF serves exactly the spec's pages. The Swift generator doesn't read pages yet; the client's router gets them when it needs to recognise BFF URLs. These requests come from a separate BFF system in mica, not from the existing LiveView routes.
-   - `defendpoint` (later): every other call (boot, form submission) with its method, path, request body and response.
+   - `defendpoint` (now, amended 2026-11-16): every other call (boot, form submission) with its method and the fields of its request and response. The path follows from the name, as a page's does: `defendpoint :save_profile, method: :post` is `POST /bff/endpoint/save_profile`, and ids travel in the request, not in the path. A request or response field may hold a model (`defmodel`), and a response field may be `:blocks`, a flat list of blocks, so a form can answer with blocks. The Elixir macro gives the server `endpoints/0` and per endpoint a `Request` whose `from_map/1` checks what the client sent and a `Response` with `to_map/1`. The Swift generator gives the app the endpoint's `method` and `path`, an `Encodable` `Request` and a `Decodable` `Response`; the app sends them with its own transport.
 
    Page and endpoint stay separate concepts. A `kind: :page` next to `:get`/`:post` would mix how a request travels (method) with what it returns: a page is always a GET with blocks, and a form POST can also answer with blocks.
 
@@ -43,10 +43,11 @@ Split the spec into two problems (Melle, 2026-10-27):
    - An `:integer` prop is a JSON number without a fraction; a `:float` prop accepts any JSON number.
    - An enum prop (`{:enum, [:success, :in_progress]}`, amended 2026-11-09) is the value's snake_case name as a JSON string (`"in_progress"`). A list prop (`{:list, :string}`, amended 2026-11-09) is a JSON array of that primitive.
    - A destination such as `section.to` is a path (`/pool/1/marketplace`), resolved against the app's base URL for its environment. How client-only actions (log out) are expressed is decided with the first block that needs one.
+   - An endpoint's request and response are JSON objects of their fields, under the rules for props (amended 2026-11-16). The server is strict about a request: a missing required field, a value of another type or an enum value the spec doesn't have is answered with 422 and `{"error": "...", "errors": {"<path>": ["..."]}}`, the path running through models and list indices (`profile.photo.url`, `tags.0`); unknown keys are ignored. A client reads a response as it reads a block, except that a required field that doesn't decode fails the whole response: an answer has no fallback.
 
 **Blocks have no children.** A page is a flat, ordered list of blocks; no block contains another block. A field holds a primitive, an enum or a list of a primitive (amended 2026-11-09), never a block or a list of blocks, and the DSL rejects that at compile time. This keeps the generated decoding and the renderers flat, and an unknown block type only ever replaces itself with a fallback. The client knows nothing about grouping yet, so there is no header block: a `section` without `to` is a plain line of text. Nesting is revisited when a page needs it; the Pixel core set's typed children are the reference then.
 
-Nested data types (a `defmodel`, e.g. an image with url, width and height) are added when a block needs one.
+Nested data types (`defmodel`, amended 2026-11-16) exist for endpoints: a model has fields like a block's, and a field may also hold a model declared before it or a list of one, so models never form a cycle. Blocks still hold no models.
 
 The Swift generator is a Mix task in this repo. It reads the block catalogue as plain data (`__schema__/0`), not the source. CI regenerates the Swift code and commits it to `next-ios`, which keeps a reviewable diff and builds without depending on this repo.
 
@@ -62,8 +63,9 @@ Amended 2026-11-09: `mica` used to get generated code committed by CI as well. E
 - A field is deprecated before it is removed, and removed only after the minimum app version no longer reads it.
 - An enum declares a fallback, one of its values (amended 2026-11-09): a client maps a value it doesn't know to it, so adding or removing an enum's values is not a breaking change. A value of another JSON type is a value that doesn't decode, as for any prop.
 - A list element that doesn't decode (a changed type, `null`) is dropped; the rest of the list stays (amended 2026-11-09). Changing a list's element type is a breaking change.
-- The spec version is the git tag (`v0.1.0`, …). CI compares the block catalogue with the last tag and fails on a breaking change.
+- The spec version is the git tag (`v0.1.0`, …). CI compares the spec with the last tag and fails on a breaking change.
 - A field records its versions with `since:` and `deprecated:` (amended 2026-11-05). `mix bff.compat` enforces the rules above in CI; a field that was deprecated in the last tag may be removed without failing. CI only checks that deprecation: "removed only after the minimum app version no longer reads it" stays a human check.
+- The fields of a model, request and response follow the rules for a block's fields. Removing a model or an endpoint, or changing an endpoint's method, is a breaking change (amended 2026-11-16).
 - Every BFF request carries the spec version the app implements, so the BFF can answer with blocks that version can render (content negotiation; part of the protocol, `defpage`/`defendpoint`). It travels in the request header `x-bff-spec` (for example `x-bff-spec: 0.1.0`; amended 2026-11-04). Until the first breaking change the BFF only records it and serves the same blocks to every version.
 
 ## Alternatives

@@ -3,7 +3,7 @@ defmodule MicaBff.Gen.SwiftTest do
 
   @moduletag :tmp_dir
 
-  test "block names Swift or the generated code reserve are refused" do
+  test "block, model and endpoint names Swift or the generated code reserve are refused" do
     for name <- [
           :block,
           :unknown,
@@ -13,10 +13,19 @@ defmodule MicaBff.Gen.SwiftTest do
           :any,
           :swift,
           :coding_keys,
-          :lossy_list
+          :lossy_list,
+          :endpoint_error
+        ],
+        schema <- [
+          %{blocks: [%{name: name, fields: []}]},
+          %{blocks: [], models: [%{name: name, fields: []}]},
+          %{
+            blocks: [],
+            endpoints: [%{name: name, method: :get, path: "/x", request: [], response: []}]
+          }
         ] do
       assert_raise ArgumentError, ~r/is reserved by Swift or the generated code/, fn ->
-        MicaBff.Gen.Swift.generate(%{blocks: [%{name: name, fields: []}]}, "BFF")
+        MicaBff.Gen.Swift.generate(schema, "BFF")
       end
     end
   end
@@ -158,6 +167,71 @@ defmodule MicaBff.Gen.SwiftTest do
     """)
   end
 
+  @tag :swift
+  test "a response decodes like a block, its required fields must decode; a request encodes; method and path",
+       %{tmp_dir: dir} do
+    schema = %{
+      blocks: [%{name: :badge, fields: [%{name: :label, type: :string, required: true}]}],
+      models: [
+        %{
+          name: :image,
+          fields: [
+            %{name: :url, type: :string, required: true},
+            %{name: :alt_text, type: :string, required: false}
+          ]
+        },
+        %{
+          name: :profile,
+          fields: [
+            %{name: :name, type: :string, required: true},
+            %{name: :photo, type: :image, required: false},
+            %{name: :photos, type: {:list, :image}, required: false},
+            %{name: :tone, type: {:enum, [:calm, :loud]}, required: false, fallback: :calm}
+          ]
+        }
+      ],
+      endpoints: [
+        %{
+          name: :save_profile,
+          method: :post,
+          path: "/bff/endpoint/save_profile",
+          request: [
+            %{name: :profile, type: :profile, required: true},
+            %{name: :tags, type: {:list, :string}, required: false}
+          ],
+          response: [
+            %{name: :profile, type: :profile, required: true},
+            %{name: :blocks, type: :blocks, required: false}
+          ]
+        },
+        %{
+          name: :sign_out,
+          method: :delete,
+          path: "/bff/endpoint/sign_out",
+          request: [],
+          response: []
+        }
+      ]
+    }
+
+    run_swift!(dir, schema, """
+    [
+        check("response", #"{"profile": {"name": "A", "photo": {"url": "/a.png", "alt_text": "A"}, "photos": [{"url": "/b.png"}, {"alt_text": "no url"}, null], "tone": "sparkly"}, "blocks": [{"type": "badge", "props": {"label": "x"}}, {"type": "carousel"}], "extra": 1}"#,
+              BFF.SaveProfile.Response(profile: .init(name: "A", photo: .init(url: "/a.png", altText: "A"), photos: [.init(url: "/b.png", altText: nil)], tone: .calm),
+                                       blocks: [.badge(.init(label: "x")), .unknown(type: "carousel")])),
+        check("optional model that doesn't decode", #"{"profile": {"name": "A", "photo": {"alt_text": "no url"}}}"#,
+              BFF.SaveProfile.Response(profile: .init(name: "A", photo: nil, photos: nil, tone: nil), blocks: nil)),
+        fails("required model that doesn't decode", #"{"profile": {"photo": {"url": "/a.png"}}}"#, BFF.SaveProfile.Response.self),
+        check("response without fields", #"{"signed_out": true}"#, BFF.SignOut.Response()),
+        check("error", #"{"error": "Check", "errors": {"profile.name": ["is required"]}}"#,
+              BFF.EndpointError(error: "Check", errors: ["profile.name": ["is required"]])),
+        encodes("request", BFF.SaveProfile.Request(profile: .init(name: "A", photo: .init(url: "/a.png", altText: nil), photos: [], tone: .loud), tags: nil),
+                #"{"profile":{"name":"A","photo":{"url":"/a.png"},"photos":[],"tone":"loud"}}"#),
+        BFF.SaveProfile.method == "POST" && BFF.SaveProfile.path == "/bff/endpoint/save_profile" && BFF.SignOut.method == "DELETE",
+    ]
+    """)
+  end
+
   defp run_swift!(dir, schema, checks) do
     File.write!(Path.join(dir, "BFF.swift"), MicaBff.Gen.Swift.generate(schema, "BFF"))
 
@@ -175,7 +249,22 @@ defmodule MicaBff.Gen.SwiftTest do
         return false
     }
 
-    let results = #{checks}
+    func fails<T: Decodable>(_ label: String, _ json: String, _ type: T.Type) -> Bool {
+        guard let got = try? JSONDecoder().decode(T.self, from: Data(json.utf8)) else { return true }
+        print("FAIL \\(label): decoded \\(got)")
+        return false
+    }
+
+    func encodes<T: Encodable>(_ label: String, _ value: T, _ json: String) -> Bool {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let got = (try? encoder.encode(value)).map { String(decoding: $0, as: UTF8.self) }
+        if got == json { return true }
+        print("FAIL \\(label): got \\(got ?? "an error")")
+        return false
+    }
+
+    let results: [Bool] = #{checks}
     exit(results.allSatisfy { $0 } ? 0 : 1)
     """)
 

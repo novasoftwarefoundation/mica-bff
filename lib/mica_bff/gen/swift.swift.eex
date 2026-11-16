@@ -29,25 +29,23 @@ extension <%= @namespace %> {
             }
         }
     }
-<%= for block <- @blocks do %>
-    /// Block `<%= block.name %>`.
-    struct <%= block.type %>: Swift.Decodable, Swift.Equatable, Swift.Sendable {
-<%= for field <- block.fields do %>        let <%= field.ident %>: <%= field.swift_type %><%= if field.required, do: "", else: "?" %>
-<% end %><%= if block.fields != [] do %>
-        private enum CodingKeys: Swift.String, Swift.CodingKey {
-<%= for field <- block.fields do %>            case <%= field.key %>
-<% end %>        }
-<% end %><%= for enum <- block.enums do %>
-        enum <%= enum.type %>: Swift.String, Swift.Decodable, Swift.Equatable, Swift.Sendable {
-<%= for value <- enum.cases do %>            case <%= value %>
-<% end %>
-            /// A value this app doesn't know becomes `<%= enum.fallback %>` (ADR 0001).
-            init(from decoder: any Swift.Decoder) throws {
-                let value = try decoder.singleValueContainer().decode(Swift.String.self)
-                self = Self(rawValue: value) ?? <%= enum.fallback %>
-            }
-        }
+<%= for source <- @structs do %>
+<%= source %>
+<% end %><%= for endpoint <- @endpoints do %>
+    /// Endpoint `<%= endpoint.name %>`: `<%= endpoint.method %> <%= endpoint.path %>`.
+    enum <%= endpoint.type %> {
+        static let method = "<%= endpoint.method %>"
+        static let path = "<%= endpoint.path %>"
+<%= for source <- endpoint.structs do %>
+<%= source %>
 <% end %>    }
+<% end %><%= if @endpoints != [] do %>
+    /// The body of an endpoint's 422: a message and, per request field path
+    /// (`photo.url`, `tags.0`), what is wrong with it.
+    struct EndpointError: Swift.Decodable, Swift.Equatable, Swift.Sendable {
+        let error: Swift.String?
+        let errors: [Swift.String: [Swift.String]]?
+    }
 <% end %><%= if @lossy do %>
     /// A list prop: an element that doesn't decode (a changed type, `null`) is dropped
     /// and the rest of the list stays (ADR 0001).
@@ -74,14 +72,12 @@ extension <%= @namespace %> {
         }
     }
 <% end %>}
-<%= for block <- @blocks, block.fields != [] do %>
-// Required props must decode; an optional prop that doesn't decode (e.g. a changed
-// type) becomes nil, so the block still renders (ADR 0001). In an extension, so the
-// memberwise initializer stays available.
-extension <%= @namespace %>.<%= block.type %> {
+<%= for record <- @decoders do %>
+<%= record.comment %>
+extension <%= @namespace %>.<%= record.path %> {
     init(from decoder: any Swift.Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-<%= for field <- block.fields do %>        self.<%= field.ident %> = <%= field.decode %>
+<%= for field <- record.fields do %>        self.<%= field.ident %> = <%= field.decode %>
 <% end %>    }
 }
 <% end %>

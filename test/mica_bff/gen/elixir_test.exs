@@ -19,6 +19,35 @@ defmodule MicaBff.Gen.ElixirTest do
       field(:status, {:enum, [:on, :off]}, fallback: :off)
       field(:tags, {:list, :string})
     end
+
+    defmodel :image do
+      field(:url, :string, required: true)
+      field(:width, :integer)
+    end
+
+    defmodel :profile do
+      field(:name, :string, required: true)
+      field(:photo, :image)
+      field(:photos, {:list, :image})
+      field(:tone, {:enum, [:calm, :loud]}, fallback: :calm)
+      field(:ratio, :float)
+      field(:active, :boolean)
+    end
+
+    defendpoint :save_profile, method: :post do
+      request do
+        field(:profile, :profile, required: true)
+        field(:tags, {:list, :string})
+      end
+
+      response do
+        field(:profile, :profile, required: true)
+        field(:blocks, :blocks)
+      end
+    end
+
+    defendpoint :sign_out, method: :delete do
+    end
   end
 
   defmodule NotASpec do
@@ -167,10 +196,149 @@ defmodule MicaBff.Gen.ElixirTest do
     assert namespace_for(Spec).pages() == []
   end
 
-  test "the defined modules call nothing in mica-bff at runtime" do
-    {_namespace, compiled} = compile_use(", spec: MicaBff.Spec")
-    imports = Enum.flat_map(compiled, fn {_module, binary} -> runtime_imports(binary) end)
+  test "the module that uses it lists the spec's endpoints with their method and path" do
+    assert namespace_for(Spec).endpoints() == [
+             %{name: :save_profile, method: :post, path: "/bff/endpoint/save_profile"},
+             %{name: :sign_out, method: :delete, path: "/bff/endpoint/sign_out"}
+           ]
+  end
 
-    refute Enum.any?(imports, &String.starts_with?(&1, "Elixir.MicaBff"))
+  test "the defined modules call nothing in mica-bff at runtime" do
+    for spec <- [MicaBff.Spec, Spec] do
+      {_namespace, compiled} = compile_use(", spec: #{inspect(spec)}")
+      imports = Enum.flat_map(compiled, fn {_module, binary} -> runtime_imports(binary) end)
+
+      refute Enum.any?(imports, &String.starts_with?(&1, "Elixir.MicaBff.")), inspect(spec)
+    end
+  end
+
+  describe "endpoints" do
+    setup do
+      ns = namespace_for(Spec)
+
+      %{
+        ns: ns,
+        request: Module.concat([ns, SaveProfile, Request]),
+        response: Module.concat([ns, SaveProfile, Response]),
+        profile: Module.concat(ns, Profile),
+        image: Module.concat(ns, Image)
+      }
+    end
+
+    test "a request that matches the spec becomes structs: enums as atoms, a float from any number, unknown keys ignored",
+         %{request: request, profile: profile, image: image} do
+      body = %{
+        "profile" => %{
+          "name" => "Ann",
+          "photo" => %{"url" => "/a.png", "width" => 10},
+          "photos" => [%{"url" => "/b.png", "unknown" => 1}],
+          "tone" => "loud",
+          "ratio" => 1,
+          "active" => false
+        },
+        "tags" => [],
+        "unknown" => "x"
+      }
+
+      assert request.from_map(body) ==
+               {:ok,
+                struct!(request,
+                  profile:
+                    struct!(profile,
+                      name: "Ann",
+                      photo: struct!(image, url: "/a.png", width: 10),
+                      photos: [struct!(image, url: "/b.png", width: nil)],
+                      tone: :loud,
+                      ratio: 1.0,
+                      active: false
+                    ),
+                  tags: []
+                )}
+    end
+
+    test "null is a missing value: fine when optional, an error when required",
+         %{request: request, profile: profile} do
+      assert request.from_map(%{"profile" => %{"name" => "Ann", "photo" => nil}, "tags" => nil}) ==
+               {:ok, struct!(request, profile: struct!(profile, name: "Ann"))}
+
+      assert request.from_map(%{}) == {:error, %{"profile" => ["is required"]}}
+      assert request.from_map(%{"profile" => nil}) == {:error, %{"profile" => ["is required"]}}
+    end
+
+    test "every mistake in a request gets a message at its field's path", %{request: request} do
+      body = %{
+        "profile" => %{
+          "name" => 1,
+          "photo" => "x",
+          "photos" => [%{"url" => "/a.png"}, %{}, nil, 3],
+          "tone" => "sparkly",
+          "ratio" => "1",
+          "active" => "yes"
+        },
+        "tags" => ["a", 2]
+      }
+
+      assert request.from_map(body) ==
+               {:error,
+                %{
+                  "profile.name" => ["must be a string"],
+                  "profile.photo" => ["must be an object"],
+                  "profile.photos.1.url" => ["is required"],
+                  "profile.photos.2" => ["is required"],
+                  "profile.photos.3" => ["must be an object"],
+                  "profile.tone" => ["must be one of calm, loud"],
+                  "profile.ratio" => ["must be a number"],
+                  "profile.active" => ["must be true or false"],
+                  "tags.1" => ["must be a string"]
+                }}
+
+      assert request.from_map(%{"profile" => [], "tags" => "a"}) ==
+               {:error, %{"profile" => ["must be an object"], "tags" => ["must be a list"]}}
+    end
+
+    test "a response encodes models, lists of models, enums and blocks, and leaves out nil optional fields",
+         %{ns: ns, response: response, profile: profile, image: image} do
+      badge = Module.concat(ns, Badge)
+
+      answer =
+        struct!(response,
+          profile:
+            struct!(profile,
+              name: "Ann",
+              photos: [struct!(image, url: "/b.png")],
+              tone: :loud,
+              active: false
+            ),
+          blocks: [struct!(badge, label: "x")]
+        )
+
+      assert response.to_map(answer) == %{
+               "profile" => %{
+                 "name" => "Ann",
+                 "photos" => [%{"url" => "/b.png"}],
+                 "tone" => "loud",
+                 "active" => false
+               },
+               "blocks" => [%{"type" => "badge", "props" => %{"label" => "x"}}]
+             }
+    end
+
+    test "an endpoint without fields has an empty request and response", %{ns: ns} do
+      request = Module.concat([ns, SignOut, Request])
+      response = Module.concat([ns, SignOut, Response])
+
+      assert request.from_map(%{"anything" => 1}) == {:ok, struct!(request, [])}
+      assert response.to_map(struct!(response, [])) == %{}
+    end
+
+    test "endpoint_error is the body of a 422", %{ns: ns} do
+      assert ns.endpoint_error("Check your profile", %{"profile.name" => ["is required"]}) ==
+               %{
+                 "error" => "Check your profile",
+                 "errors" => %{"profile.name" => ["is required"]}
+               }
+
+      assert ns.endpoint_error("Not allowed") == %{"error" => "Not allowed", "errors" => %{}}
+    end
   end
 end

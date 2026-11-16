@@ -135,4 +135,57 @@ defmodule MicaBff.CompatTest do
              "card: block removed"
            ]
   end
+
+  defp endpoint(name, method, request, response),
+    do: %{
+      name: name,
+      method: method,
+      path: "/bff/endpoint/#{name}",
+      request: request,
+      response: response
+    }
+
+  defp spec(models, endpoints),
+    do: %{blocks: [], pages: [], models: models, endpoints: endpoints}
+
+  test "removing a model or an endpoint breaks, adding one doesn't" do
+    small = spec([], [])
+    big = spec([%{name: :image, fields: []}], [endpoint(:save, :post, [], [])])
+
+    assert breaking_changes(big, small) == ["image: model removed", "save: endpoint removed"]
+    assert breaking_changes(small, big) == []
+  end
+
+  test "changing an endpoint's method breaks" do
+    old = spec([], [endpoint(:save, :post, [], [])])
+    new = spec([], [endpoint(:save, :put, [], [])])
+
+    assert breaking_changes(old, new) == ["save: method changed from :post to :put"]
+  end
+
+  test "the fields of a model, request and response follow the rules for a block's fields" do
+    old =
+      spec(
+        [%{name: :image, fields: [field(:url), field(:alt, deprecated: "0.2.0")]}],
+        [endpoint(:save, :post, [field(:name)], [field(:id)])]
+      )
+
+    new =
+      spec(
+        [%{name: :image, fields: [field(:url, type: :integer), field(:width, required: true)]}],
+        [endpoint(:save, :post, [field(:name, required: true)], [])]
+      )
+
+    assert breaking_changes(old, new) == [
+             "image.url: type changed from :string to :integer",
+             "image.width: new required field on an existing model",
+             "save.request.name: changed from optional to required",
+             "save.response.id: removed without being deprecated first"
+           ]
+  end
+
+  test "an old schema without models or endpoints compares on its blocks" do
+    old = %{blocks: [], pages: []}
+    assert breaking_changes(old, spec([%{name: :image, fields: []}], [])) == []
+  end
 end
