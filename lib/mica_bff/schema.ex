@@ -2,10 +2,11 @@ defmodule MicaBff.Schema do
   @moduledoc """
   The schema of the BFF spec, written as a DSL. It plays the role an XSD plays
   for XML: the macros define what a valid spec is, and the modules that `use`
-  them (`MicaBff.Blocks`, `MicaBff.Pages`) are the spec, composed by `MicaBff.Spec`.
+  them (`MicaBff.Types`, `MicaBff.Blocks`, `MicaBff.Pages`) are the spec, composed
+  by `MicaBff.Spec`.
 
       defmodule MyBlocks do
-        use MicaBff.Schema
+        use MicaBff.Schema, types: MyTypes
 
         defblock :section do
           field :title, :string, required: true
@@ -13,63 +14,94 @@ defmodule MicaBff.Schema do
         end
       end
 
+  `types:` names a module whose types this one's fields may hold, as if they were
+  declared here before everything else.
+
   - `defblock` declares a block the BFF can send and clients can render.
   - `field` declares a prop: a snake_case name, a type and `required: true | false`
     (default `false`). A type is a primitive (`:string`, `:integer`, `:float`,
     `:boolean`), an enum (`{:enum, [:accent, :neutral]}`, snake_case values, with
-    `fallback:` one of them: what a client makes of a value it doesn't know) or a
-    list of one primitive (`{:list, :string}`). Never a block: blocks have no
-    children, a page is a flat list of blocks.
+    `fallback:` one of them: what a client makes of a value it doesn't know), a
+    declared type (`:filter_option`) or a list of one primitive or declared type
+    (`{:list, :string}`). Never a block: blocks have no children, a page is a flat
+    list of blocks.
     Two more options, both a literal `"major.minor.patch"` spec version (the git tag
     without its `v`) and left out of `__schema__/0` when unset: `since:` (the version
     that added the field) and `deprecated:` (the version that deprecated it, not
     before `since:`). `fallback:` is in `__schema__/0` only on an enum.
+  - `deftype` declares a nested object with fields like a block's. A type's field
+    may hold a type declared before it (`field :photo, :image`) or a list of one
+    (`{:list, :image}`), so types never form a cycle.
   - `defpage` declares a page the BFF serves: always a GET at `/bff/page/<name>`
     that returns a flat list of blocks (`defpage :home` is `GET /bff/page/home`).
+    In its `do` block, `param` declares a query parameter with a snake_case name
+    and a primitive type: `param :year, :integer` reads `?year=2025`.
 
   Every mistake fails at compile time and points at its line: an unknown type or
   option, a name that isn't a snake_case atom, a duplicate name, a block used as
   a field type or named after a primitive, an enum without values or without a
-  fallback among them, a list of anything but a primitive, a `field` outside a
-  `defblock`, a `defblock` or `defpage` inside a `defblock`, and a malformed or
-  out-of-order version. Generators read `__schema__/0`, never the source.
+  fallback among them, a list of anything but a primitive or a declared type, a
+  type used before it is declared, a `field` outside a `defblock` or `deftype`, a
+  `param` outside a `defpage` or of a type that isn't a primitive, a declaration
+  inside another, and a malformed or out-of-order version. Generators read
+  `__schema__/0`, never the source.
   """
 
   @primitives [:string, :integer, :float, :boolean]
 
-  defmacro __using__(_opts) do
+  defmacro __using__(opts) do
+    types = Keyword.get(opts, :types)
+
     quote do
-      import MicaBff.Schema, only: [defblock: 2, defpage: 1, field: 2, field: 3]
+      import MicaBff.Schema,
+        only: [defblock: 2, deftype: 2, defpage: 1, defpage: 2, field: 2, field: 3, param: 2]
+
       Module.register_attribute(__MODULE__, :mica_bff_blocks, accumulate: true)
+      Module.register_attribute(__MODULE__, :mica_bff_types, accumulate: true)
       Module.register_attribute(__MODULE__, :mica_bff_pages, accumulate: true)
+
+      # The other module's types, read while this one compiles.
+      @mica_bff_external_types unquote(
+                                 if types,
+                                   do:
+                                     quote(
+                                       do: Enum.map(unquote(types).__schema__().types, & &1.name)
+                                     ),
+                                   else: []
+                               )
       @before_compile MicaBff.Schema
     end
   end
 
-  defmacro defblock(name, do: body) do
-    line = __CALLER__.line
+  defmacro defblock(name, do: body),
+    do: record(:defblock, :mica_bff_blocks, name, body, __CALLER__)
+
+  defmacro deftype(name, do: body),
+    do: record(:deftype, :mica_bff_types, name, body, __CALLER__)
+
+  defp record(kind, attribute, name, body, caller) do
+    line = caller.line
 
     quote do
-      if open = Module.get_attribute(__MODULE__, :mica_bff_open_block) do
-        MicaBff.Schema.__fail__(
-          __ENV__.file,
-          unquote(line),
-          "defblock #{inspect(unquote(name))} inside defblock #{inspect(open)}; blocks have no children"
-        )
-      end
+      MicaBff.Schema.__top_level__!(
+        __MODULE__,
+        __ENV__.file,
+        unquote(line),
+        "#{unquote(kind)} #{inspect(unquote(name))}"
+      )
 
-      Module.put_attribute(__MODULE__, :mica_bff_open_block, unquote(name))
+      Module.put_attribute(__MODULE__, :mica_bff_open, {unquote(kind), unquote(name)})
       Module.register_attribute(__MODULE__, :mica_bff_fields, accumulate: true)
       unquote(body)
 
-      @mica_bff_blocks %{
+      Module.put_attribute(__MODULE__, unquote(attribute), %{
         name: unquote(name),
         line: unquote(line),
         fields: Enum.reverse(Module.get_attribute(__MODULE__, :mica_bff_fields))
-      }
+      })
 
       Module.delete_attribute(__MODULE__, :mica_bff_fields)
-      Module.delete_attribute(__MODULE__, :mica_bff_open_block)
+      Module.delete_attribute(__MODULE__, :mica_bff_open)
     end
   end
 
@@ -109,11 +141,14 @@ defmodule MicaBff.Schema do
     extras = versions ++ fallback
 
     quote do
-      unless Module.get_attribute(__MODULE__, :mica_bff_open_block) do
+      unless match?(
+               {kind, _} when kind in [:defblock, :deftype],
+               Module.get_attribute(__MODULE__, :mica_bff_open)
+             ) do
         MicaBff.Schema.__fail__(
           __ENV__.file,
           unquote(line),
-          "field #{inspect(unquote(name))} outside a defblock"
+          "field #{inspect(unquote(name))} outside a defblock or deftype"
         )
       end
 
@@ -127,19 +162,48 @@ defmodule MicaBff.Schema do
     end
   end
 
-  defmacro defpage(name) do
+  defmacro defpage(name), do: page(name, nil, __CALLER__)
+  defmacro defpage(name, do: body), do: page(name, body, __CALLER__)
+
+  defp page(name, body, caller) do
+    line = caller.line
+
+    quote do
+      MicaBff.Schema.__top_level__!(
+        __MODULE__,
+        __ENV__.file,
+        unquote(line),
+        "defpage #{inspect(unquote(name))}"
+      )
+
+      Module.put_attribute(__MODULE__, :mica_bff_open, {:defpage, unquote(name)})
+      Module.register_attribute(__MODULE__, :mica_bff_params, accumulate: true)
+      unquote(body)
+
+      @mica_bff_pages %{
+        name: unquote(name),
+        line: unquote(line),
+        params: Enum.reverse(Module.get_attribute(__MODULE__, :mica_bff_params))
+      }
+
+      Module.delete_attribute(__MODULE__, :mica_bff_params)
+      Module.delete_attribute(__MODULE__, :mica_bff_open)
+    end
+  end
+
+  defmacro param(name, type) do
     line = __CALLER__.line
 
     quote do
-      if open = Module.get_attribute(__MODULE__, :mica_bff_open_block) do
+      unless match?({:defpage, _}, Module.get_attribute(__MODULE__, :mica_bff_open)) do
         MicaBff.Schema.__fail__(
           __ENV__.file,
           unquote(line),
-          "defpage #{inspect(unquote(name))} inside defblock #{inspect(open)}"
+          "param #{inspect(unquote(name))} outside a defpage"
         )
       end
 
-      @mica_bff_pages %{name: unquote(name), line: unquote(line)}
+      @mica_bff_params %{name: unquote(name), type: unquote(type), line: unquote(line)}
     end
   end
 
@@ -147,60 +211,82 @@ defmodule MicaBff.Schema do
   def __fail__(file, line, description),
     do: raise(CompileError, file: file, line: line, description: description)
 
+  @doc false
+  def __top_level__!(module, file, line, what) do
+    case Module.get_attribute(module, :mica_bff_open) do
+      {kind, name} -> __fail__(file, line, "#{what} inside #{kind} #{inspect(name)}")
+      nil -> :ok
+    end
+  end
+
   defmacro __before_compile__(env) do
-    blocks = env.module |> Module.get_attribute(:mica_bff_blocks) |> Enum.reverse()
-    pages = env.module |> Module.get_attribute(:mica_bff_pages) |> Enum.reverse()
-    validate!(blocks, env.file)
+    get = &(env.module |> Module.get_attribute(&1) |> Enum.reverse())
+    blocks = get.(:mica_bff_blocks)
+    types = get.(:mica_bff_types)
+    pages = get.(:mica_bff_pages)
+    external = Module.get_attribute(env.module, :mica_bff_external_types)
+
+    # One `seen` across blocks and types: in Swift and Elixir both are types in one namespace.
+    seen = validate_blocks!(blocks, types, external, env.file)
+    validate_types!(types, external, seen, env.file)
     validate_pages!(pages, env.file)
 
     # Line numbers are only for error messages; generators get the plain spec.
     schema = %{
-      blocks:
-        for block <- blocks do
-          %{name: block.name, fields: Enum.map(block.fields, &Map.delete(&1, :line))}
+      blocks: Enum.map(blocks, &plain_record/1),
+      pages:
+        for %{name: name, params: params} <- pages do
+          %{name: name, path: "/bff/page/#{name}", params: plain_fields(params)}
         end,
-      pages: for(page <- pages, do: %{name: page.name, path: "/bff/page/#{page.name}"})
+      types: Enum.map(types, &plain_record/1)
     }
 
     quote do
-      @doc "The spec as plain data (blocks and pages), for generators and validation."
+      @doc "The spec as plain data (blocks, pages and types), for generators and validation."
       def __schema__, do: unquote(Macro.escape(schema))
     end
   end
 
+  defp plain_record(%{name: name, fields: fields}),
+    do: %{name: name, fields: plain_fields(fields)}
+
+  defp plain_fields(fields), do: Enum.map(fields, &Map.delete(&1, :line))
+
   defp validate_pages!(pages, file) do
-    Enum.reduce(pages, MapSet.new(), fn %{name: name, line: line}, seen ->
+    Enum.reduce(pages, MapSet.new(), fn %{name: name, line: line, params: params}, seen ->
       fail = &__fail__(file, line, &1)
       check_name!(name, "page", fail)
       if name in seen, do: fail.("page #{inspect(name)} is defined twice")
+      validate_params!(name, params, file)
+      MapSet.put(seen, name)
+    end)
+  end
+
+  # A param is a query parameter: its name is its key in the query, as written.
+  defp validate_params!(page, params, file) do
+    Enum.reduce(params, MapSet.new(), fn %{name: name, type: type, line: line}, seen ->
+      fail = &__fail__(file, line, &1)
+      check_name!(name, "param", fail)
+      if name in seen, do: fail.("page #{inspect(page)} has param #{inspect(name)} twice")
+
+      unless type in @primitives,
+        do: fail.("param #{inspect(name)}: a param is a primitive type, got #{inspect(type)}")
+
       MapSet.put(seen, name)
     end)
   end
 
   # Blocks have no children: a page is a flat list of blocks, so no field may hold a block.
-  defp validate!(blocks, file) do
+  defp validate_blocks!(blocks, types, external, file) do
     block_names = Enum.map(blocks, & &1.name)
+    # A block may hold any type: no type holds a block, so there is no cycle.
+    types = external ++ Enum.map(types, & &1.name)
+    allowed = %{blocks: block_names, types: types, all_types: types}
 
     Enum.reduce(blocks, %{}, fn %{name: name, fields: fields} = block, seen ->
       fail = &__fail__(file, block.line, &1)
-      check_name!(name, "block", fail)
-
-      if name in @primitives,
-        do: fail.("block #{inspect(name)} clashes with the primitive type #{inspect(name)}")
-
-      Enum.reduce(fields, %{}, fn field, seen_fields ->
-        fail = &__fail__(file, field.line, &1)
-        check_name!(field.name, "field", fail)
-        check_type!(name, field, block_names, fail)
-
-        unique!(
-          seen_fields,
-          field.name,
-          fail,
-          "#{inspect(name)} has field #{inspect(field.name)} twice",
-          &"#{inspect(name)} has fields #{inspect(&1)} and #{inspect(field.name)}, which clients both name #{&2}"
-        )
-      end)
+      check_record_name!(name, "block", fail)
+      validate_fields!(inspect(name), fields, allowed, file)
 
       unique!(
         seen,
@@ -208,6 +294,52 @@ defmodule MicaBff.Schema do
         fail,
         "#{inspect(name)} is defined twice",
         &"the spec has blocks #{inspect(&1)} and #{inspect(name)}, which clients both name #{&2}"
+      )
+    end)
+  end
+
+  # A type holds only types declared before it, so types never form a cycle.
+  defp validate_types!(types, external, seen, file) do
+    all = external ++ Enum.map(types, & &1.name)
+
+    Enum.reduce(types, {seen, []}, fn %{name: name, fields: fields, line: line}, {seen, before} ->
+      fail = &__fail__(file, line, &1)
+      check_record_name!(name, "type", fail)
+      allowed = %{blocks: [], types: external ++ before, all_types: all}
+      validate_fields!(inspect(name), fields, allowed, file)
+
+      seen =
+        unique!(
+          seen,
+          name,
+          fail,
+          "#{inspect(name)} is defined twice",
+          &"the spec has #{inspect(&1)} and #{inspect(name)}, which clients both name #{&2}"
+        )
+
+      {seen, [name | before]}
+    end)
+  end
+
+  defp check_record_name!(name, kind, fail) do
+    check_name!(name, kind, fail)
+
+    if name in @primitives,
+      do: fail.("#{kind} #{inspect(name)} clashes with the primitive type #{inspect(name)}")
+  end
+
+  defp validate_fields!(owner, fields, allowed, file) do
+    Enum.reduce(fields, %{}, fn field, seen_fields ->
+      fail = &__fail__(file, field.line, &1)
+      check_name!(field.name, "field", fail)
+      check_type!("#{owner}.#{field.name}", field, allowed, fail)
+
+      unique!(
+        seen_fields,
+        field.name,
+        fail,
+        "#{owner} has field #{inspect(field.name)} twice",
+        &"#{owner} has fields #{inspect(&1)} and #{inspect(field.name)}, which clients both name #{&2}"
       )
     end)
   end
@@ -225,8 +357,10 @@ defmodule MicaBff.Schema do
     end
   end
 
-  defp check_type!(block, %{name: name, type: type} = field, block_names, fail) do
-    at = "#{inspect(block)}.#{name}"
+  # `allowed.types` are the declared types a field may hold; `all_types` names every
+  # one, to tell one not declared before it apart.
+  defp check_type!(at, %{type: type} = field, allowed, fail) do
+    element = list_element(type)
 
     cond do
       type in @primitives ->
@@ -238,11 +372,17 @@ defmodule MicaBff.Schema do
       match?({:enum, _values}, type) ->
         check_enum!(at, field, fail)
 
-      block_type(type) in block_names ->
-        fail.("#{at} holds block #{inspect(block_type(type))}; blocks have no children")
+      element in allowed.blocks ->
+        fail.("#{at} holds block #{inspect(element)}; blocks have no children")
+
+      element in allowed.types ->
+        :ok
+
+      element in allowed.all_types ->
+        fail.("#{at} holds type #{inspect(element)}, which isn't declared before it")
 
       match?({:list, _}, type) ->
-        fail.("#{at}: a list holds one primitive type, got #{inspect(elem(type, 1))}")
+        fail.("#{at}: a list holds one primitive or declared type, got #{inspect(element)}")
 
       true ->
         fail.("#{at} has unknown type #{inspect(type)}")
@@ -252,8 +392,8 @@ defmodule MicaBff.Schema do
       do: fail.("#{at}: fallback is only for an enum")
   end
 
-  defp block_type({:list, block}), do: block
-  defp block_type(block), do: block
+  defp list_element({:list, element}), do: element
+  defp list_element(type), do: type
 
   # Values become wire strings and Swift cases; the fallback is what a client shows
   # for a value it doesn't know (ADR 0001).

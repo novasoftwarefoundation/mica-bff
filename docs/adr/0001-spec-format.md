@@ -20,18 +20,21 @@ The board asked to research a schema format, with XSD-style contract validation 
 
 | Layer | What | Where |
 |---|---|---|
-| Schema | What a valid spec is: the DSL (`defblock`, `field`), the field types (primitives, enums, lists of a primitive), the rules. The role an XSD plays for XML. | `MicaBff.Schema` |
+| Schema | What a valid spec is: the DSL (`defblock`, `deftype`, `field`, `defpage`, `param`), the field types (primitives, enums, declared types, lists of a primitive or declared type), the rules. The role an XSD plays for XML. | `MicaBff.Schema` |
+| Types | The nested data types blocks hold (`deftype`) | `MicaBff.Types` (amended 2026-11-17) |
 | Block catalogue | The blocks themselves, written with the schema DSL | `MicaBff.Blocks` |
-| Pages | The pages the BFF serves (`defpage`) | `MicaBff.Pages` (amended 2026-11-05) |
-| Protocol | The other calls: boot, form submission (`defendpoint`) | later |
+| Pages | The pages the BFF serves, with their query parameters (`defpage`, `param`) | `MicaBff.Pages` (amended 2026-11-05, 2026-11-17) |
+| Protocol | The other calls, such as a form's POST (`defendpoint`) | later |
 | Generated code | Client code, generated from the above; server code, defined from it at compile time | next-ios; mica, by a macro |
 
 Split the spec into two problems (Melle, 2026-10-27):
 
-1. **Data model**: an Elixir DSL with macros. The schema defines what a valid spec is, like an XSD for XML; the modules that use it are the spec, like the XML document: one per kind (`MicaBff.Blocks`, `MicaBff.Pages`), composed by `MicaBff.Spec`, whose `__schema__/0` returns the whole spec as data (amended 2026-11-05).
+1. **Data model**: an Elixir DSL with macros. The schema defines what a valid spec is, like an XSD for XML; the modules that use it are the spec, like the XML document: one per kind (`MicaBff.Types`, `MicaBff.Blocks`, `MicaBff.Pages`), composed by `MicaBff.Spec`, whose `__schema__/0` returns the whole spec as data (amended 2026-11-05, 2026-11-17).
    - `defblock` (now): a block the BFF sends and clients render.
+   - `deftype` (now, amended 2026-11-17): a nested data type a block's field holds, such as a filter's option. A type is a JSON object of its fields, never on a page by itself and without a fallback of its own: one that doesn't decode is treated as any prop that doesn't decode. A type's field may hold a type declared before it or a list of one, so types never form a cycle.
    - `defpage` (now, amended 2026-11-04): a page the BFF serves. Always a GET that returns `{"blocks": [...]}`, at `/bff/page/<page>`: the path follows from the page name (`defpage :home` → `GET /bff/page/home`), singular because a request fetches one page. `__schema__/0` lists the pages with their paths, and the Elixir macro gives the server `pages/0` on the namespace module, so the BFF serves exactly the spec's pages. The Swift generator doesn't read pages yet; the client's router gets them when it needs to recognise BFF URLs. These requests come from a separate BFF system in mica, not from the existing LiveView routes.
-   - `defendpoint` (later): every other call (boot, form submission) with its method, path, request body and response.
+     A page declares its query parameters with `param`, a snake_case name and a primitive type (amended 2026-11-17): `defpage :marketplace do param :year, :integer end` reads `?year=2025`. The BFF renders the whole page for those parameters; nothing is loaded later. The Elixir macro gives the server `page_params/2`, which reads them from a request typed, and leaves out one that is empty or doesn't parse, as if absent, so a stale link still opens the page. Clients don't read params: the server builds every link with them.
+   - `defendpoint` (later): every other call, such as a form's POST, with its method, path, request body and response.
 
    Page and endpoint stay separate concepts. A `kind: :page` next to `:get`/`:post` would mix how a request travels (method) with what it returns: a page is always a GET with blocks, and a form POST can also answer with blocks.
 
@@ -43,10 +46,9 @@ Split the spec into two problems (Melle, 2026-10-27):
    - An `:integer` prop is a JSON number without a fraction; a `:float` prop accepts any JSON number.
    - An enum prop (`{:enum, [:success, :in_progress]}`, amended 2026-11-09) is the value's snake_case name as a JSON string (`"in_progress"`). A list prop (`{:list, :string}`, amended 2026-11-09) is a JSON array of that primitive.
    - A destination such as `section.to` is a path (`/pool/1/marketplace`), resolved against the app's base URL for its environment. How client-only actions (log out) are expressed is decided with the first block that needs one.
+   - Filtering is going to the same page with the filter applied (amended 2026-11-17). A `filter` block's options carry their links (`/bff/page/marketplace?year=2025&query=sleep`), built by the server with the page's other parameters kept; a `search` block carries the link without its own parameter and the parameter's `name`, and the client adds the typed text, as the user types with a pause. The client loads the link in place of the page it shows, without a new screen.
 
-**Blocks have no children.** A page is a flat, ordered list of blocks; no block contains another block. A field holds a primitive, an enum or a list of a primitive (amended 2026-11-09), never a block or a list of blocks, and the DSL rejects that at compile time. This keeps the generated decoding and the renderers flat, and an unknown block type only ever replaces itself with a fallback. The client knows nothing about grouping yet, so there is no header block: a `section` without `to` is a plain line of text. Nesting is revisited when a page needs it; the Pixel core set's typed children are the reference then.
-
-Nested data types (a `defmodel`, e.g. an image with url, width and height) are added when a block needs one.
+**Blocks have no children.** A page is a flat, ordered list of blocks; no block contains another block. A field holds a primitive, an enum, a declared type or a list of a primitive or declared type (amended 2026-11-09, 2026-11-17), never a block or a list of blocks, and the DSL rejects that at compile time. This keeps the renderers flat, and an unknown block type only ever replaces itself with a fallback. The client knows nothing about grouping yet, so there is no header block: a `section` without `to` is a plain line of text. Nesting is revisited when a page needs it; the Pixel core set's typed children are the reference then.
 
 The Swift generator is a Mix task in this repo. It reads the block catalogue as plain data (`__schema__/0`), not the source. CI regenerates the Swift code and commits it to `next-ios`, which keeps a reviewable diff and builds without depending on this repo.
 
@@ -62,7 +64,7 @@ Amended 2026-11-09: `mica` used to get generated code committed by CI as well. E
 - A field is deprecated before it is removed, and removed only after the minimum app version no longer reads it.
 - An enum declares a fallback, one of its values (amended 2026-11-09): a client maps a value it doesn't know to it, so adding or removing an enum's values is not a breaking change. A value of another JSON type is a value that doesn't decode, as for any prop.
 - A list element that doesn't decode (a changed type, `null`) is dropped; the rest of the list stays (amended 2026-11-09). Changing a list's element type is a breaking change.
-- The spec version is the git tag (`v0.1.0`, …). CI compares the block catalogue with the last tag and fails on a breaking change.
+- The spec version is the git tag (`v0.1.0`, …). CI compares the blocks and types with the last tag and fails on a breaking change. A type's fields follow the rules for a block's fields, and removing a type is a breaking change (amended 2026-11-17).
 - A field records its versions with `since:` and `deprecated:` (amended 2026-11-05). `mix bff.compat` enforces the rules above in CI; a field that was deprecated in the last tag may be removed without failing. CI only checks that deprecation: "removed only after the minimum app version no longer reads it" stays a human check.
 - Every BFF request carries the spec version the app implements, so the BFF can answer with blocks that version can render (content negotiation; part of the protocol, `defpage`/`defendpoint`). It travels in the request header `x-bff-spec` (for example `x-bff-spec: 0.1.0`; amended 2026-11-04). Until the first breaking change the BFF only records it and serves the same blocks to every version.
 

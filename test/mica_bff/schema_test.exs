@@ -22,8 +22,45 @@ defmodule MicaBff.SchemaTest do
                %{name: :a, fields: []}
              ],
              pages: [
-               %{name: :settings, path: "/bff/page/settings"},
-               %{name: :home, path: "/bff/page/home"}
+               %{name: :settings, path: "/bff/page/settings", params: []},
+               %{name: :home, path: "/bff/page/home", params: []}
+             ],
+             types: []
+           }
+  end
+
+  test "a page's params and the types are plain data in declaration order" do
+    [{module, _}] =
+      compile!("""
+      deftype :image do field :url, :string, required: true end
+      deftype :gallery do
+        field :cover, :image
+        field :photos, {:list, :image}
+      end
+      defpage :marketplace do
+        param :year, :integer
+        param :query, :string
+      end
+      """)
+
+    assert module.__schema__() == %{
+             blocks: [],
+             pages: [
+               %{
+                 name: :marketplace,
+                 path: "/bff/page/marketplace",
+                 params: [%{name: :year, type: :integer}, %{name: :query, type: :string}]
+               }
+             ],
+             types: [
+               %{name: :image, fields: [%{name: :url, type: :string, required: true}]},
+               %{
+                 name: :gallery,
+                 fields: [
+                   %{name: :cover, type: :image, required: false},
+                   %{name: :photos, type: {:list, :image}, required: false}
+                 ]
+               }
              ]
            }
   end
@@ -33,8 +70,30 @@ defmodule MicaBff.SchemaTest do
 
     assert module.__schema__() == %{
              blocks: [%{name: :a, fields: [%{name: :x, type: :string, required: false}]}],
-             pages: []
+             pages: [],
+             types: []
            }
+  end
+
+  test "a block or type may hold the types of the module named by types:, a block also its own" do
+    [{types, _}] = compile!("deftype :option do field :label, :string, required: true end")
+
+    [{module, _}] =
+      compile!(
+        """
+        defblock :filter do
+          field :options, {:list, :option}, required: true
+          field :default, :choice
+        end
+        deftype :choice do field :option, :option end
+        """,
+        types: types
+      )
+
+    assert %{
+             blocks: [%{fields: [%{type: {:list, :option}}, %{type: :choice}]}],
+             types: [%{name: :choice, fields: [%{type: :option}]}]
+           } = module.__schema__()
   end
 
   test "since and deprecated are in the schema when set and absent when not" do
@@ -91,9 +150,8 @@ defmodule MicaBff.SchemaTest do
            ":a has field :x twice"},
           {"defblock :a do end\ndefblock :b do field :child, :a end", 4,
            ":b.child holds block :a; blocks have no children"},
-          {"defblock :a do\ndefblock :b do end\nend", 4,
-           "defblock :b inside defblock :a; blocks have no children"},
-          {"field :x, :string", 3, "field :x outside a defblock"},
+          {"defblock :a do\ndefblock :b do end\nend", 4, "defblock :b inside defblock :a"},
+          {"field :x, :string", 3, "field :x outside a defblock or deftype"},
           {"defblock :SectionHeader do end", 3,
            "block name :SectionHeader must be a snake_case atom"},
           {~s(defblock :a do field "x", :string end), 3,
@@ -135,9 +193,10 @@ defmodule MicaBff.SchemaTest do
           {"defblock :a do field :x, :string, fallback: :a end", 3,
            ":a.x: fallback is only for an enum"},
           {"defblock :a do field :x, {:list, {:list, :string}} end", 3,
-           ":a.x: a list holds one primitive type, got {:list, :string}"},
+           ":a.x: a list holds one primitive or declared type, got {:list, :string}"},
           {"defblock :a do field :x, {:list, {:enum, [:b]}} end", 3,
-           ":a.x: a list holds one primitive type, got {:enum, [:b]}"},
+           ":a.x: a list holds one primitive or declared type, got {:enum, [:b]}"},
+          {"defblock :a do field :x, :image end", 3, ":a.x has unknown type :image"},
           {"defblock :a do end\ndefblock :b do field :children, {:list, :a} end", 4,
            ":b.children holds block :a; blocks have no children"},
           # Clients name things in camelCase, where these would be the same name.
@@ -157,18 +216,44 @@ defmodule MicaBff.SchemaTest do
           {"defblock :a do field nil, :string end", 3,
            "field name nil must be a snake_case atom other than nil, true and false"},
           {"defblock :a do field :x, {:enum, [:a]}, fallback: nil end", 3,
-           ":a.x: fallback nil is not one of [:a]"}
+           ":a.x: fallback nil is not one of [:a]"},
+          # Types only hold types declared before them, so they never form a cycle.
+          {"deftype :a do field :b, :b end\ndeftype :b do end", 3,
+           ":a.b holds type :b, which isn't declared before it"},
+          {"deftype :a do field :children, {:list, :a} end", 3,
+           ":a.children holds type :a, which isn't declared before it"},
+          {"deftype :a do field :x, {:list, {:list, :string}} end", 3,
+           ":a.x: a list holds one primitive or declared type, got {:list, :string}"},
+          {"deftype :integer do end", 3,
+           "type :integer clashes with the primitive type :integer"},
+          {"deftype :a do\ndeftype :b do end\nend", 4, "deftype :b inside deftype :a"},
+          {"defblock :a do end\ndeftype :a do end", 4, ":a is defined twice"},
+          {"defblock :a_b do end\ndeftype :a__b do end", 4,
+           "the spec has :a_b and :a__b, which clients both name aB"},
+          # A param is a query parameter of a primitive type, declared in its page.
+          {"param :year, :integer", 3, "param :year outside a defpage"},
+          {"defblock :a do param :year, :integer end", 3, "param :year outside a defpage"},
+          {"defpage :a do field :x, :string end", 3, "field :x outside a defblock or deftype"},
+          {"defpage :a do\nparam :year, :integer\nparam :year, :string\nend", 5,
+           "page :a has param :year twice"},
+          {"defpage :a do param :Year, :integer end", 3,
+           "param name :Year must be a snake_case atom"},
+          {"defpage :a do param :years, {:list, :integer} end", 3,
+           "param :years: a param is a primitive type, got {:list, :integer}"},
+          {"defpage :a do param :tone, {:enum, [:a]} end", 3,
+           "param :tone: a param is a primitive type, got {:enum, [:a]}"},
+          {"defpage :a do defpage :b end", 3, "defpage :b inside defpage :a"}
         ] do
       error = assert_raise CompileError, fn -> compile!(body) end
       assert Exception.message(error) =~ "bad.ex:#{line}: #{message}", body
     end
   end
 
-  defp compile!(body) do
+  defp compile!(body, opts \\ []) do
     Code.compile_string(
       """
       defmodule Bad#{System.unique_integer([:positive])} do
-        use MicaBff.Schema
+        use MicaBff.Schema#{if opts[:types], do: ", types: #{inspect(opts[:types])}"}
       #{body}
       end
       """,

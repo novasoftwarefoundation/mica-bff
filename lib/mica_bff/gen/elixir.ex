@@ -1,7 +1,7 @@
 defmodule MicaBff.Gen.Elixir do
   @moduledoc """
-  Defines one Elixir module per block at compile time, under the module that uses
-  it, the way `Prism.Generator.Phoenix` defines components:
+  Defines one Elixir module per block and type at compile time, under the module
+  that uses it, the way `Prism.Generator.Phoenix` defines components:
 
       defmodule Systems.BFF.Blocks do
         use MicaBff.Gen.Elixir, spec: MicaBff.Spec
@@ -12,10 +12,14 @@ defmodule MicaBff.Gen.Elixir do
   `%{"type" => ..., "props" => ...}` for any JSON library (mica uses Jason).
   Optional props that are `nil` are left out, as ADR 0001 requires; `""`, `0`,
   `false`, `[]` and `%{}` are values and are sent. An enum prop is an atom in the
-  struct and its name on the wire; a list is a list. The module that uses it gets
-  `pages/0`, the spec's pages: `[%{name: :home, path: "/bff/page/home"}]`. The
-  defined modules call nothing in mica-bff, so an app can depend on it with
-  `runtime: false`.
+  struct and its name on the wire; a list is a list. A type
+  (`Systems.BFF.Blocks.FilterOption`) is a struct whose `to_map/1` gives a plain
+  JSON object, and a block's prop holds its struct.
+
+  The module that uses it gets `pages/0`, the spec's pages with their params
+  (`[%{name: :home, path: "/bff/page/home", params: []}]`), and `page_params/2`,
+  which reads a page's params from the request's query parameters. The defined
+  modules call nothing in mica-bff, so an app can depend on it with `runtime: false`.
   """
 
   @types %{
@@ -29,18 +33,89 @@ defmodule MicaBff.Gen.Elixir do
     opts = options!(opts, __CALLER__)
     spec = spec!(opts[:spec], __CALLER__)
     schema = spec.__schema__()
-    modules = Enum.map(schema.blocks, &block_module(&1, __CALLER__.module))
-    pages = Map.get(schema, :pages, [])
+    namespace = __CALLER__.module
+    pages = Enum.map(Map.get(schema, :pages, []), &Map.put_new(&1, :params, []))
+    types = Map.get(schema, :types, [])
+    type_modules = Map.new(types, &{&1.name, module(namespace, &1.name)})
+
+    records =
+      Enum.map(types, &record(&1, "Type", namespace, type_modules, :to_map)) ++
+        Enum.map(schema.blocks, &record(&1, "Block", namespace, type_modules, :block))
 
     # A compile-time dependency: this module recompiles when the spec changes.
     quote do
       require unquote(spec)
 
       @doc "The pages the BFF serves, in spec order: each is a GET at its path that returns a flat list of blocks."
-      @spec pages() :: [%{name: atom, path: String.t()}]
+      @spec pages() :: [%{name: atom, path: String.t(), params: [%{name: atom, type: atom}]}]
       def pages, do: unquote(Macro.escape(pages))
 
-      unquote_splicing(modules)
+      @doc """
+      The params of `page` in `query`, a request's query parameters, by name and typed:
+      `page_params(:marketplace, %{"year" => "2025"})` is `%{year: 2025}`. One the page
+      doesn't declare, one that is empty and one that doesn't parse are left out, as if
+      absent: a stale link still opens the page.
+      """
+      @spec page_params(atom, %{String.t() => term}) :: %{atom => term}
+      def page_params(page, query) when is_map(query) do
+        case Enum.find(pages(), &(&1.name == page)) do
+          %{params: params} ->
+            for %{name: name, type: type} <- params,
+                {:ok, value} <- [__param__(type, Map.get(query, Atom.to_string(name)))],
+                into: %{},
+                do: {name, value}
+
+          nil ->
+            %{}
+        end
+      end
+
+      defp __param__(_type, ""), do: :error
+      defp __param__(:string, value) when is_binary(value), do: {:ok, value}
+      defp __param__(:boolean, "true"), do: {:ok, true}
+      defp __param__(:boolean, "false"), do: {:ok, false}
+
+      defp __param__(:integer, value) when is_binary(value) do
+        case Integer.parse(value) do
+          {integer, ""} -> {:ok, integer}
+          _ -> :error
+        end
+      end
+
+      defp __param__(:float, value) when is_binary(value) do
+        case Float.parse(value) do
+          {float, ""} -> {:ok, float}
+          _ -> :error
+        end
+      end
+
+      defp __param__(_type, _value), do: :error
+
+      # Encodes the fields of a block or type. A field is `{name, key, type, required}`,
+      # its type with each declared type resolved to its module: `{:type, module}`.
+      @doc false
+      def __encode__(fields, record) do
+        Enum.reduce(fields, %{}, fn {name, key, type, required}, map ->
+          case Map.fetch!(record, name) do
+            nil when not required -> map
+            value -> Map.put(map, key, __encode_value__(type, value))
+          end
+        end)
+      end
+
+      defp __encode_value__(_type, nil), do: nil
+
+      defp __encode_value__({:enum, _values}, value) when is_atom(value),
+        do: Atom.to_string(value)
+
+      defp __encode_value__({:type, module}, value), do: module.to_map(value)
+
+      defp __encode_value__({:list, type}, values),
+        do: Enum.map(values, &__encode_value__(type, &1))
+
+      defp __encode_value__(_primitive, value), do: value
+
+      unquote_splicing(records)
     end
   end
 
@@ -87,62 +162,61 @@ defmodule MicaBff.Gen.Elixir do
     MicaBff.Schema.__fail__(env.file, env.line, message)
   end
 
-  defp block_module(%{name: name, fields: fields}, namespace) do
-    module = Module.concat(namespace, Macro.camelize(to_string(name)))
+  defp module(namespace, name), do: Module.concat(namespace, Macro.camelize(to_string(name)))
 
-    quote do
-      defmodule unquote(module), do: unquote(block_body(name, fields))
-    end
-  end
-
-  defp block_body(name, fields) do
+  # A block or type: a struct and its `to_map/1`. Only the spec's fields are encoded:
+  # a key put on the struct by hand is never sent.
+  defp record(%{name: name, fields: fields}, kind, namespace, type_modules, shape) do
     keys = Enum.map(fields, & &1.name)
     required = for %{name: key, required: true} <- fields, do: key
-    enums = for %{name: key, type: {:enum, _}} <- fields, do: key
-    types = Enum.map(fields, &{&1.name, type(&1)})
+    types = Enum.map(fields, &{&1.name, type(&1, type_modules)})
 
-    quote do
-      @moduledoc unquote("Block `#{name}`.")
-      @enforce_keys unquote(required)
-      defstruct unquote(keys)
+    codec_fields =
+      Macro.escape(
+        for %{name: name, type: type, required: required} <- fields,
+            do: {name, Atom.to_string(name), codec_type(type, type_modules), required}
+      )
 
-      @type t :: %__MODULE__{unquote_splicing(types)}
+    encoded = quote(do: unquote(namespace).__encode__(unquote(codec_fields), record))
 
-      @doc "The wire shape, ready for any JSON encoder."
-      @spec to_map(t) :: map
-      def to_map(%__MODULE__{} = block),
-        do: %{"type" => unquote(to_string(name)), "props" => props(block)}
+    wire =
+      case shape do
+        :block ->
+          quote(do: %{"type" => unquote(Atom.to_string(name)), "props" => unquote(encoded)})
 
-      # Only the spec's fields: a key put on the struct by hand is never sent.
-      defp props(block) do
-        for {key, value} <- Map.take(block, unquote(keys)),
-            value != nil or key in unquote(required),
-            into: %{},
-            do: {Atom.to_string(key), wire(key, value)}
+        :to_map ->
+          encoded
       end
 
-      unquote(enum_wire(enums))
-      defp wire(_key, value), do: value
-    end
-  end
-
-  # An enum is an atom in the struct and its name on the wire. Only blocks with an
-  # enum get this clause, so the others have no clause that can't match.
-  defp enum_wire([]), do: nil
-
-  defp enum_wire(enums) do
     quote do
-      defp wire(key, value) when key in unquote(enums) and is_atom(value) and value != nil,
-        do: Atom.to_string(value)
+      defmodule unquote(module(namespace, name)) do
+        @moduledoc unquote("#{kind} `#{name}`.")
+        @enforce_keys unquote(required)
+        defstruct unquote(keys)
+
+        @type t :: %__MODULE__{unquote_splicing(types)}
+
+        @doc "The wire shape, ready for any JSON encoder."
+        @spec to_map(t) :: map
+        def to_map(%__MODULE__{} = record), do: unquote(wire)
+      end
     end
   end
 
-  defp type(%{type: type, required: true}), do: base_type(type)
-  defp type(%{type: type}), do: quote(do: unquote(base_type(type)) | nil)
+  defp codec_type({:list, type}, types), do: {:list, codec_type(type, types)}
+  defp codec_type(type, types) when is_map_key(types, type), do: {:type, types[type]}
+  defp codec_type(type, _types), do: type
 
-  defp base_type({:enum, values}),
+  defp type(%{type: type, required: true}, types), do: base_type(type, types)
+  defp type(%{type: type}, types), do: quote(do: unquote(base_type(type, types)) | nil)
+
+  defp base_type({:enum, values}, _types),
     do: values |> Enum.reverse() |> Enum.reduce(&quote(do: unquote(&1) | unquote(&2)))
 
-  defp base_type({:list, type}), do: quote(do: [unquote(@types[type])])
-  defp base_type(type), do: @types[type]
+  defp base_type({:list, type}, types), do: quote(do: [unquote(base_type(type, types))])
+
+  defp base_type(type, types) when is_map_key(types, type),
+    do: quote(do: unquote(types[type]).t())
+
+  defp base_type(type, _types), do: @types[type]
 end

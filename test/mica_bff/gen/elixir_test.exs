@@ -19,6 +19,28 @@ defmodule MicaBff.Gen.ElixirTest do
       field(:status, {:enum, [:on, :off]}, fallback: :off)
       field(:tags, {:list, :string})
     end
+
+    deftype :image do
+      field(:url, :string, required: true)
+      field(:width, :integer)
+    end
+
+    deftype :gallery do
+      field(:cover, :image, required: true)
+      field(:photos, {:list, :image})
+      field(:tone, {:enum, [:calm, :loud]}, fallback: :calm)
+    end
+
+    defblock :album do
+      field(:gallery, :gallery, required: true)
+    end
+
+    defpage :search do
+      param(:query, :string)
+      param(:year, :integer)
+      param(:ratio, :float)
+      param(:open, :boolean)
+    end
   end
 
   defmodule NotASpec do
@@ -66,40 +88,77 @@ defmodule MicaBff.Gen.ElixirTest do
     Enum.map(imports, fn {module, _function, _arity} -> Atom.to_string(module) end)
   end
 
-  test "every block gets its module, with the block's fields as struct keys" do
+  test "every block and type gets its module, with its fields as struct keys" do
     {namespace, compiled} = compile_use(", spec: MicaBff.Spec")
-    blocks = MicaBff.Spec.__schema__().blocks
-    expected = [namespace | Enum.map(blocks, &block_module(namespace, &1))]
+    %{blocks: blocks, types: types} = MicaBff.Spec.__schema__()
+    expected = [namespace | Enum.map(blocks ++ types, &block_module(namespace, &1))]
 
     assert compiled |> Keyword.keys() |> Enum.sort() == Enum.sort(expected)
 
-    for block <- blocks do
-      assert struct_keys(block_module(namespace, block)) == field_names(block)
+    for record <- blocks ++ types do
+      assert struct_keys(block_module(namespace, record)) == field_names(record)
     end
   end
 
   # Every section prop is optional, so the fixtures also check that nil props are left out.
-  # An enum prop goes in as an atom, as the server sets it, so its encoding is checked too.
+  # An enum prop goes in as an atom and a type as its struct, as the server sets them,
+  # so their encoding is checked too.
   test "every fixture encodes back to itself through its module" do
     ns = namespace_for(MicaBff.Spec)
-    %{blocks: blocks} = MicaBff.Spec.__schema__()
+    %{blocks: blocks, types: types} = MicaBff.Spec.__schema__()
+    types = Map.new(types, &{&1.name, block_module(ns, &1)})
+
+    type! = fn module, map ->
+      struct!(module, Map.new(map, fn {k, v} -> {String.to_existing_atom(k), v} end))
+    end
+
+    value = fn
+      %{type: {:enum, _}}, v -> String.to_existing_atom(v)
+      %{type: {:list, t}}, v when is_map_key(types, t) -> Enum.map(v, &type!.(types[t], &1))
+      %{type: t}, v when is_map_key(types, t) -> type!.(types[t], v)
+      _field, v -> v
+    end
 
     for path <- Path.wildcard("fixtures/*.json") do
       %{"type" => type, "props" => props} = fixture = path |> File.read!() |> JSON.decode!()
       %{fields: fields} = Enum.find(blocks, &(to_string(&1.name) == type))
-      enums = for %{name: name, type: {:enum, _}} <- fields, do: to_string(name)
+      fields = Map.new(fields, &{to_string(&1.name), &1})
       module = Module.concat(ns, Macro.camelize(type))
 
       block =
         struct!(
           module,
-          Map.new(props, fn {k, v} ->
-            {String.to_existing_atom(k), if(k in enums, do: String.to_existing_atom(v), else: v)}
-          end)
+          Map.new(props, fn {k, v} -> {String.to_existing_atom(k), value.(fields[k], v)} end)
         )
 
       assert module.to_map(block) == fixture, path
     end
+  end
+
+  test "a block's type, a type's types and enums encode as plain JSON objects, nil optionals left out" do
+    ns = namespace_for(Spec)
+    [album, gallery, image] = Enum.map([Album, Gallery, Image], &Module.concat(ns, &1))
+
+    block =
+      struct!(album,
+        gallery:
+          struct!(gallery,
+            cover: struct!(image, url: "/a.png"),
+            photos: [struct!(image, url: "/b.png", width: 10)],
+            tone: :loud
+          )
+      )
+
+    assert album.to_map(block) == %{
+             "type" => "album",
+             "props" => %{
+               "gallery" => %{
+                 "cover" => %{"url" => "/a.png"},
+                 "photos" => [%{"url" => "/b.png", "width" => 10}],
+                 "tone" => "loud"
+               }
+             }
+           }
   end
 
   test "only nil optional props are left out" do
@@ -162,15 +221,52 @@ defmodule MicaBff.Gen.ElixirTest do
     assert_raise CompileError, message, fn -> compile_use(", spec: #{inspect(NotASpec)}") end
   end
 
-  test "the module that uses it lists the spec's pages; a spec without pages has none" do
+  test "the module that uses it lists the spec's pages with their params" do
     assert namespace_for(MicaBff.Spec).pages() == MicaBff.Spec.__schema__().pages
-    assert namespace_for(Spec).pages() == []
+
+    assert namespace_for(Spec).pages() == [
+             %{
+               name: :search,
+               path: "/bff/page/search",
+               params: [
+                 %{name: :query, type: :string},
+                 %{name: :year, type: :integer},
+                 %{name: :ratio, type: :float},
+                 %{name: :open, type: :boolean}
+               ]
+             }
+           ]
+  end
+
+  test "page_params reads a page's declared params, typed; one that is empty or doesn't parse is absent" do
+    ns = namespace_for(Spec)
+
+    assert ns.page_params(:search, %{
+             "query" => "sleep well",
+             "year" => "2025",
+             "ratio" => "0.5",
+             "open" => "true",
+             "other" => "x"
+           }) == %{query: "sleep well", year: 2025, ratio: 0.5, open: true}
+
+    assert ns.page_params(:search, %{
+             "query" => "",
+             "year" => "20x5",
+             "ratio" => "a",
+             "open" => "yes"
+           }) ==
+             %{}
+
+    assert ns.page_params(:search, %{"year" => ["2025"]}) == %{}
+    assert ns.page_params(:nope, %{"query" => "x"}) == %{}
   end
 
   test "the defined modules call nothing in mica-bff at runtime" do
-    {_namespace, compiled} = compile_use(", spec: MicaBff.Spec")
-    imports = Enum.flat_map(compiled, fn {_module, binary} -> runtime_imports(binary) end)
+    for spec <- [MicaBff.Spec, Spec] do
+      {_namespace, compiled} = compile_use(", spec: #{inspect(spec)}")
+      imports = Enum.flat_map(compiled, fn {_module, binary} -> runtime_imports(binary) end)
 
-    refute Enum.any?(imports, &String.starts_with?(&1, "Elixir.MicaBff"))
+      refute Enum.any?(imports, &String.starts_with?(&1, "Elixir.MicaBff.")), inspect(spec)
+    end
   end
 end
