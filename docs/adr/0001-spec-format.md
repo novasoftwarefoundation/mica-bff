@@ -41,7 +41,7 @@ Split the spec into two problems (Melle, 2026-10-27):
    **Navigation belongs to the client, not the spec.** A block that opens something carries only the destination (`section.to`). The client's router (navigation rules, UC-SENSE-06) decides whether it opens a native page, a BFF page or a web page, and how it is presented. Moving a page between native, BFF and web changes no spec and no block. `defpage` lets the router recognise BFF URLs; nothing in the spec has to point at it.
 2. **Serialization**: JSON, with these rules:
    - A block is `{"type": "section", "props": {...}}`. Type and prop names are the snake_case names from the schema; generators map them to each platform's naming.
-   - An optional prop that is `nil` is left out by the BFF; `""`, `0`, `false` and empty lists or maps are values and are sent. Clients treat a missing prop and `null` the same.
+   - An optional prop that is `nil` is left out by the BFF; `""`, `0`, `false` and empty lists or maps are values and are sent. A required prop is never `nil`: the server's encoder raises instead (amended 2026-11-17). Clients treat a missing prop and `null` the same.
    - Clients ignore unknown keys, both next to `type`/`props` and inside `props`.
    - An `:integer` prop is a JSON number without a fraction; a `:float` prop accepts any JSON number.
    - An enum prop (`{:enum, [:success, :in_progress]}`, amended 2026-11-09) is the value's snake_case name as a JSON string (`"in_progress"`). A list prop (`{:list, :string}`, amended 2026-11-09) is a JSON array of that primitive.
@@ -58,8 +58,9 @@ Amended 2026-11-09: `mica` used to get generated code committed by CI as well. E
 
 ### Compatibility
 
-- The client renders an unknown block type as a fallback block. A known block that fails to decode (for example, a required prop is missing or has the wrong type) is treated the same way: that block becomes a fallback, the rest of the page renders.
-- An optional prop that fails to decode (for example, its type changed) is treated as missing: the block still renders without it.
+- **Tolerant reader** (Melle, amended 2026-11-17): `required` binds the server only. Clients treat every prop as optional and always render something for a block type they know, even if it looks rough, so a server slip or an older app never makes content disappear; the generated Swift has every prop optional. Before, a known block with a required prop missing or of the wrong type became a fallback, which is how untitled adverts disappeared from the app (mono#2084).
+- The client renders an unknown block type as a fallback block; the rest of the page renders.
+- A prop that fails to decode (for example, its type changed) is treated as missing: the block still renders without it. Props that aren't an object give the block with every prop missing.
 - New blocks and new optional props can be added at any time. A new field on an existing block is always optional, so an older server or a cached page still decodes in a newer client.
 - A field is deprecated before it is removed, and removed only after the minimum app version no longer reads it.
 - An enum declares a fallback, one of its values (amended 2026-11-09): a client maps a value it doesn't know to it, so adding or removing an enum's values is not a breaking change. A value of another JSON type is a value that doesn't decode, as for any prop.

@@ -161,10 +161,20 @@ defmodule MicaBff.Gen.ElixirTest do
            }
   end
 
-  test "only nil optional props are left out" do
+  test "only nil optional props are left out; nil for a required prop raises, in a block or a type" do
     assert badge_props(label: "x") == %{"label" => "x"}
     assert badge_props(label: "", count: 0) == %{"label" => "", "count" => 0}
-    assert badge_props(label: nil) == %{"label" => nil}
+
+    assert_raise ArgumentError, ~r/Badge: required prop label is nil/, fn ->
+      badge_props(label: nil)
+    end
+
+    ns = namespace_for(Spec)
+    [album, gallery] = Enum.map([Album, Gallery], &Module.concat(ns, &1))
+
+    assert_raise ArgumentError, ~r/Gallery: required prop cover is nil/, fn ->
+      album.to_map(struct!(album, gallery: struct!(gallery, cover: nil)))
+    end
   end
 
   test "a block without fields encodes to empty props" do

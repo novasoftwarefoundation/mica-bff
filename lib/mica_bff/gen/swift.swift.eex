@@ -3,8 +3,8 @@
 enum <%= @namespace %> {}
 
 extension <%= @namespace %> {
-    /// One block on a BFF page. Decoding never fails: a type this app doesn't
-    /// know, or a known block whose required props don't decode, becomes `.unknown`.
+    /// One block on a BFF page. Decoding never fails: a type this app doesn't know
+    /// becomes `.unknown`, and a known block always decodes, with the props it could read.
     enum Block: Swift.Decodable, Swift.Equatable, Swift.Sendable {
 <%= for block <- @blocks do %>        case <%= block.case %>(<%= block.type %>)
 <% end %>        case unknown(type: Swift.String)
@@ -22,8 +22,8 @@ extension <%= @namespace %> {
             }
             switch type {
 <%= for block <- @blocks do %>            case "<%= block.name %>":
-                self = (try? container.decode(<%= block.type %>.self, forKey: .props))
-                    .map(Block.<%= block.case %>) ?? .unknown(type: type)
+                self = .<%= block.case %>((try? container.decode(<%= block.type %>.self, forKey: .props))
+                    ?? <%= block.none %>)
 <% end %>            default:
                 self = .unknown(type: type)
             }
