@@ -3,7 +3,7 @@ defmodule MicaBff.Gen.SwiftTest do
 
   @moduletag :tmp_dir
 
-  test "block names Swift or the generated code reserve are refused" do
+  test "block and type names Swift or the generated code reserve are refused" do
     for name <- [
           :block,
           :unknown,
@@ -14,9 +14,13 @@ defmodule MicaBff.Gen.SwiftTest do
           :swift,
           :coding_keys,
           :lossy_list
+        ],
+        schema <- [
+          %{blocks: [%{name: name, fields: []}]},
+          %{blocks: [], types: [%{name: name, fields: []}]}
         ] do
       assert_raise ArgumentError, ~r/is reserved by Swift or the generated code/, fn ->
-        MicaBff.Gen.Swift.generate(%{blocks: [%{name: name, fields: []}]}, "BFF")
+        MicaBff.Gen.Swift.generate(schema, "BFF")
       end
     end
   end
@@ -68,6 +72,12 @@ defmodule MicaBff.Gen.SwiftTest do
               BFF.Block.advert(.init(title: "Sleep and screens", to: "/promotion/7", imageUrl: "https://images.example.org/sleep.jpg", logoUrl: "/images/logos/uu.png", tags: ["Health", "Media"], info: "Duration: 10 min. | Reward: € 2,00"))),
         check("participation", #"#{fixture.("participation.json")}"#,
               BFF.Block.participation(.init(title: "Sleep and screens", subtitle: "2 days ago", statusLabel: "Awaiting", statusTone: .warning, reward: "Reward € 2,00", to: "/assignment/7"))),
+        check("filter", #"#{fixture.("filter.json")}"#,
+              BFF.Block.filter(.init(label: "Filter:", options: [.init(label: "All", to: "/bff/page/marketplace?query=sleep", selected: nil), .init(label: "2026", to: "/bff/page/marketplace?query=sleep&year=2026", selected: true), .init(label: "2025", to: "/bff/page/marketplace?query=sleep&year=2025", selected: false)]))),
+        check("filter option without its link", #"{"type": "filter", "props": {"options": [{"label": "A"}, {"label": "B", "to": "/b"}]}}"#,
+              BFF.Block.filter(.init(label: nil, options: [.init(label: "B", to: "/b", selected: nil)]))),
+        check("search", #"#{fixture.("search.json")}"#,
+              BFF.Block.search(.init(name: "query", to: "/bff/page/marketplace?year=2026", placeholder: "Search", value: "sleep"))),
         check("unknown tone", #"{"type": "participation", "props": {"title": "A", "status_tone": "sparkly"}}"#,
               BFF.Block.participation(.init(title: "A", subtitle: nil, statusLabel: nil, statusTone: .neutral, reward: nil, to: nil))),
         check("null prop", #"{"type": "section", "props": {"title": "A", "to": null}}"#,
@@ -158,6 +168,51 @@ defmodule MicaBff.Gen.SwiftTest do
     """)
   end
 
+  @tag :swift
+  test "a type in a block decodes like a block's props: a broken required one drops the block; a type encodes",
+       %{tmp_dir: dir} do
+    schema = %{
+      blocks: [
+        %{
+          name: :album,
+          fields: [
+            %{name: :gallery, type: :gallery, required: true},
+            %{name: :extra, type: :image, required: false}
+          ]
+        }
+      ],
+      types: [
+        %{
+          name: :image,
+          fields: [
+            %{name: :url, type: :string, required: true},
+            %{name: :alt_text, type: :string, required: false}
+          ]
+        },
+        %{
+          name: :gallery,
+          fields: [
+            %{name: :name, type: :string, required: true},
+            %{name: :cover, type: :image, required: false},
+            %{name: :photos, type: {:list, :image}, required: false},
+            %{name: :tone, type: {:enum, [:calm, :loud]}, required: false, fallback: :calm}
+          ]
+        }
+      ]
+    }
+
+    run_swift!(dir, schema, """
+    [
+        check("types", #"{"type": "album", "props": {"gallery": {"name": "A", "cover": {"url": "/a.png", "alt_text": "A"}, "photos": [{"url": "/b.png"}, {"alt_text": "no url"}, null], "tone": "sparkly"}, "extra": {"alt_text": "no url"}}}"#,
+              BFF.Block.album(.init(gallery: .init(name: "A", cover: .init(url: "/a.png", altText: "A"), photos: [.init(url: "/b.png", altText: nil)], tone: .calm), extra: nil))),
+        check("required type that doesn't decode", #"{"type": "album", "props": {"gallery": {"cover": {"url": "/a.png"}}}}"#,
+              BFF.Block.unknown(type: "album")),
+        encodes("type", BFF.Gallery(name: "A", cover: .init(url: "/a.png", altText: nil), photos: [], tone: .loud),
+                #"{"cover":{"url":"/a.png"},"name":"A","photos":[],"tone":"loud"}"#),
+    ]
+    """)
+  end
+
   defp run_swift!(dir, schema, checks) do
     File.write!(Path.join(dir, "BFF.swift"), MicaBff.Gen.Swift.generate(schema, "BFF"))
 
@@ -175,7 +230,17 @@ defmodule MicaBff.Gen.SwiftTest do
         return false
     }
 
-    let results = #{checks}
+
+    func encodes<T: Encodable>(_ label: String, _ value: T, _ json: String) -> Bool {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let got = (try? encoder.encode(value)).map { String(decoding: $0, as: UTF8.self) }
+        if got == json { return true }
+        print("FAIL \\(label): got \\(got ?? "an error")")
+        return false
+    }
+
+    let results: [Bool] = #{checks}
     exit(results.allSatisfy { $0 } ? 0 : 1)
     """)
 

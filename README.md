@@ -2,18 +2,19 @@
 
 The spec for the Mica backend for frontend (BFF): the blocks the server sends and the clients render, and what turns the spec into code. An Elixir server (`mica`) defines the block modules at compile time with a macro; client code for `next-ios` is generated.
 
-- `lib/mica_bff/schema.ex`: the schema, written as a DSL (`defblock`, `field`, `defpage`)
+- `lib/mica_bff/schema.ex`: the schema, written as a DSL (`defblock`, `deftype`, `field`, `defpage`, `param`)
+- `lib/mica_bff/types.ex`: the nested data types blocks hold, such as a filter's options
 - `lib/mica_bff/blocks.ex`: the block catalogue
-- `lib/mica_bff/pages.ex`: the pages the BFF serves
-- `lib/mica_bff/spec.ex`: the spec, blocks and pages together; the Swift generator and the Elixir macro read its `__schema__/0`
-- `lib/mica_bff/compat.ex`: what counts as a breaking change between two catalogues
-- `lib/mix/tasks/bff.compat.ex`: compares the catalogue with the last `v*` tag; CI fails on a breaking change
-- `lib/mica_bff/gen/elixir.ex`: the macro that defines the Elixir block modules
-- `lib/mix/tasks/bff.gen.swift.ex`: generates the Swift block types for next-ios
+- `lib/mica_bff/pages.ex`: the pages the BFF serves, with their query parameters
+- `lib/mica_bff/spec.ex`: the spec, types, blocks and pages together; the Swift generator and the Elixir macro read its `__schema__/0`
+- `lib/mica_bff/compat.ex`: what counts as a breaking change between two specs
+- `lib/mix/tasks/bff.compat.ex`: compares the spec with the last `v*` tag; CI fails on a breaking change
+- `lib/mica_bff/gen/elixir.ex`: the macro that defines the Elixir block and type modules
+- `lib/mix/tasks/bff.gen.swift.ex`: generates the Swift block and type structs for next-ios
 - `fixtures/`: example payloads; generated code must encode and decode them exactly
 - `docs/adr/`: decisions, starting with [0001: spec format](docs/adr/0001-spec-format.md)
 
-Blocks travel as JSON: `{"type": "section", "props": {"title": "...", "body": "...", "to": "/..."}}`. A page (`defpage :home`) is `GET /bff/page/home`, answered with `{"blocks": [...]}`; the app sends the spec version it implements in the `x-bff-spec` header.
+Blocks travel as JSON: `{"type": "section", "props": {"title": "...", "body": "...", "to": "/..."}}`; a type is a JSON object of its fields inside a prop. A page (`defpage :home`) is `GET /bff/page/home`, answered with `{"blocks": [...]}`; its params are query parameters (`param :year, :integer` reads `?year=2025`). A filter is a link to the same page with the filter applied, which the app loads in place. The app sends the spec version it implements in the `x-bff-spec` header.
 
 ```sh
 mix test   # the Swift tests need swiftc; without it they are skipped locally, never in CI
@@ -21,7 +22,7 @@ mix run -e 'IO.inspect(MicaBff.Spec.__schema__())'
 
 # fails on a breaking change against the last v* tag (or --against TAG); without a tag it passes
 mix bff.compat
-# one file, BFF.swift: enum BFF.Block (one case per block + .unknown) and a struct per block
+# one file, BFF.swift: enum BFF.Block (one case per block + .unknown) and a struct per block and type
 mix bff.gen.swift --out ../next-ios/Next/BFF
 ```
 
@@ -33,7 +34,7 @@ Depend on this repo at a pinned commit. The defined modules call nothing in mica
 {:mica_bff, github: "novasoftwarefoundation/mica-bff", ref: "<full sha>", runtime: false}
 ```
 
-Then define the block modules under a module of your own, here `Systems.BFF.Blocks.Section` and so on, each a struct with `to_map/1`; the module itself gets `pages/0`, the spec's pages:
+Then define the modules under a module of your own, here `Systems.BFF.Blocks.Section` and so on, each a struct with `to_map/1`, and a type such as `Systems.BFF.Blocks.FilterOption` likewise. The module itself gets `pages/0`, the spec's pages with their params, and `page_params/2`, which reads a page's params from a request's query parameters, typed (`page_params(:marketplace, %{"year" => "2025"})` is `%{year: 2025}`):
 
 ```elixir
 defmodule Systems.BFF.Blocks do

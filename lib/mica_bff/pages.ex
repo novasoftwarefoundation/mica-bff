@@ -1,7 +1,8 @@
 defmodule MicaBff.Pages do
   @moduledoc """
-  The pages the BFF serves, half of the spec (`MicaBff.Spec`). A page is a GET
-  at `/bff/page/<name>` that returns `{"blocks": [...]}`.
+  The pages the BFF serves, part of the spec (`MicaBff.Spec`). A page is a GET at
+  `/bff/page/<name>` that returns `{"blocks": [...]}`, with its params as query
+  parameters.
   """
   use MicaBff.Schema
 
@@ -12,6 +13,10 @@ defmodule MicaBff.Pages do
   # Every study the user took part in, as `participation` blocks.
   defpage(:history)
 
-  # Every study open to the user in the marketplace, as `advert` blocks.
-  defpage(:marketplace)
+  # Every study open to the user in the marketplace, as `advert` blocks: those
+  # published in `year` whose title has every word of `query`.
+  defpage :marketplace do
+    param(:year, :integer)
+    param(:query, :string)
+  end
 end

@@ -1,0 +1,1 @@
+{"type": "filter", "props": {"label": "Filter:", "options": [{"label": "All", "to": "/bff/page/marketplace?query=sleep"}, {"label": "2026", "to": "/bff/page/marketplace?query=sleep&year=2026", "selected": true}, {"label": "2025", "to": "/bff/page/marketplace?query=sleep&year=2025", "selected": false}]}}

@@ -135,4 +135,33 @@ defmodule MicaBff.CompatTest do
              "card: block removed"
            ]
   end
+
+  defp spec(types), do: %{blocks: [], pages: [], types: types}
+
+  test "removing a type breaks, adding one doesn't" do
+    assert breaking_changes(spec([%{name: :image, fields: []}]), spec([])) ==
+             ["image: type removed"]
+
+    assert breaking_changes(spec([]), spec([%{name: :image, fields: []}])) == []
+  end
+
+  test "a type's fields follow the rules for a block's fields" do
+    old =
+      spec([%{name: :image, fields: [field(:url), field(:alt, deprecated: "0.2.0"), field(:id)]}])
+
+    new =
+      spec([
+        %{name: :image, fields: [field(:url, type: :integer), field(:width, required: true)]}
+      ])
+
+    assert breaking_changes(old, new) == [
+             "image.url: type changed from :string to :integer",
+             "image.id: removed without being deprecated first",
+             "image.width: new required field on an existing type"
+           ]
+  end
+
+  test "an old schema without types compares on its blocks" do
+    assert breaking_changes(%{blocks: [], pages: []}, spec([%{name: :image, fields: []}])) == []
+  end
 end

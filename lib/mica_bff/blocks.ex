@@ -1,6 +1,6 @@
 defmodule MicaBff.Blocks do
   @moduledoc """
-  Every block the BFF can send and every client can render, half of the spec
+  Every block the BFF can send and every client can render, part of the spec
   (`MicaBff.Spec`). On the wire a block is `{"type": "section", "props": {...}}`.
 
   A destination (`to`) is a path (`/pool/1/marketplace`), as ADR 0001 says; an
@@ -14,8 +14,13 @@ defmodule MicaBff.Blocks do
   `section_begin` leaves out comes from the enclosing group, and the nearest
   group that sets it wins. A client ignores a `section_end` without an open group
   and closes the groups still open at the end of the page.
+
+  A `filter` or `search` narrows down the page it is on by going to that page with
+  the filter applied: the server builds the links, with the page's other query
+  parameters kept (`/bff/page/marketplace?year=2025&query=sleep`), and the client
+  loads the page there in place of the one it shows.
   """
-  use MicaBff.Schema
+  use MicaBff.Schema, types: MicaBff.Types
 
   # A status colour: Prism's tag tones. A client shows a tone it doesn't know as neutral.
   @tone {:enum, [:accent, :success, :warning, :danger, :neutral]}
@@ -82,5 +87,22 @@ defmodule MicaBff.Blocks do
     field(:status_tone, @tone, fallback: :neutral)
     field(:reward, :string)
     field(:to, :string)
+  end
+
+  # Narrows the page down to one of `options`, shown as chips after `label`
+  # ("Filter:"). Choosing one goes to its `to`.
+  defblock :filter do
+    field(:label, :string)
+    field(:options, {:list, :filter_option}, required: true)
+  end
+
+  # Searches the page: a text field showing `placeholder` when empty and `value`, the
+  # text in effect. While the user types, the client goes to `to` with the text as the
+  # query parameter `name` after a pause, and to `to` as it is when the field is empty.
+  defblock :search do
+    field(:name, :string, required: true)
+    field(:to, :string, required: true)
+    field(:placeholder, :string)
+    field(:value, :string)
   end
 end
