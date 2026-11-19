@@ -97,7 +97,21 @@
       {"kind": "border", "start": "a", "end": "b"},
       {"kind": "background", "start": "c", "end": "c"}
     ],
-    "check": "two blocks have id \"a\"",
+    "check": "markup from \"a\" to \"b\": two blocks have id \"a\"",
     "tree": ["a", "b", "a", {"markup": 1, "children": ["c"]}]
+  },
+  {
+    "name": "two blocks with one id that no markup names hold",
+    "ids": ["a", "a", "b"],
+    "markup": [{"kind": "border", "start": "b", "end": "b"}],
+    "check": null,
+    "tree": ["a", "a", {"markup": 0, "children": ["b"]}]
+  },
+  {
+    "name": "an id with a quote or a backslash is written as it is",
+    "ids": ["a\"b", "c\\d"],
+    "markup": [{"kind": "border", "start": "c\\d", "end": "a\"b"}],
+    "check": "markup from \"c\\d\" to \"a\"b\": it ends before it starts",
+    "tree": ["a\"b", "c\\d"]
   }
 ]

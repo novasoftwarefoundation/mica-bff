@@ -177,27 +177,26 @@ defmodule MicaBff.Gen.Elixir do
 
       @doc """
       `:ok` when `markup` holds for the blocks with `ids`, in page order, or
-      `{:error, reason}` for the first thing that doesn't: two blocks with one id, an
-      entry whose `start` or `end` is no block's id, one that ends before it starts, or
-      one that crosses an entry before it. Markup nests as in XML: two entries share no
-      block, or one covers all of the other.
+      `{:error, reason}` for the first entry that doesn't: one whose `start` or `end`
+      is no block's id or an id two blocks have, one that ends before it starts, or one
+      that crosses an entry before it. Markup nests as in XML: two entries share no
+      block, or one covers all of the other. Two blocks with one id are fine as long as
+      no markup names that id.
       """
       @spec check([String.t() | nil], [map]) :: :ok | {:error, String.t()}
       def check(ids, markup) do
         positions = __positions__(ids)
 
-        result =
-          Enum.reduce_while(markup, [], fn entry, kept ->
-            case __span__(positions, kept, entry) do
-              {:ok, span} -> {:cont, [span | kept]}
-              error -> {:halt, error}
-            end
-          end)
-
-        case {__duplicates__(ids), result} do
-          {[id | _], _} -> {:error, "two blocks have id #{inspect(id)}"}
-          {[], {:error, reason}} -> {:error, reason}
-          {[], _kept} -> :ok
+        markup
+        |> Enum.reduce_while([], fn entry, kept ->
+          case __span__(positions, kept, entry) do
+            {:ok, span} -> {:cont, [span | kept]}
+            error -> {:halt, error}
+          end
+        end)
+        |> case do
+          {:error, reason} -> {:error, reason}
+          _kept -> :ok
         end
       end
 
@@ -243,50 +242,50 @@ defmodule MicaBff.Gen.Elixir do
       defp __tree__([id | ids], position, spans),
         do: [{:block, id} | __tree__(ids, position + 1, spans)]
 
-      # Ids more than one block has, in page order. A block without an id has none.
-      defp __duplicates__(ids), do: Enum.uniq(Enum.reject(ids -- Enum.uniq(ids), &is_nil/1))
-
-      # Where each id is on the page. An id two blocks have points at neither.
+      # Where each id is on the page; `:duplicate` for an id two blocks have. A block
+      # without an id has none.
       defp __positions__(ids) do
-        duplicates = __duplicates__(ids)
+        ids
+        |> Enum.with_index()
+        |> Enum.reduce(%{}, fn
+          {id, position}, positions when is_binary(id) ->
+            Map.update(positions, id, position, fn _position -> :duplicate end)
 
-        for {id, position} <- Enum.with_index(ids),
-            is_binary(id) and id not in duplicates,
-            into: %{},
-            do: {id, position}
+          _block, positions ->
+            positions
+        end)
+      end
+
+      defp __position__(positions, id) do
+        case Map.fetch(positions, id) do
+          {:ok, :duplicate} -> {:error, ~s(two blocks have id "#{id}")}
+          {:ok, position} -> {:ok, position}
+          :error -> {:error, ~s("#{id}" is no block's id)}
+        end
       end
 
       # The positions an entry covers, when it nests with the entries `kept` before it.
+      # Ids are quoted as they are, as every client writes them.
       defp __span__(positions, kept, %{start: start, end: stop} = entry) do
-        first = Map.get(positions, start)
-        last = Map.get(positions, stop)
-        name = "markup from #{inspect(start)} to #{inspect(stop)}"
+        name = ~s(markup from "#{start}" to "#{stop}")
 
-        crosses? = fn {_entry, a, b} ->
-          (a < first and first <= b and b < last) or (first < a and a <= last and last < b)
-        end
+        with {:ok, first} <- __position__(positions, start),
+             {:ok, last} <- __position__(positions, stop),
+             :ok <- if(last < first, do: {:error, "it ends before it starts"}, else: :ok),
+             # The first crossed entry in list order, as every client reports it.
+             nil <- kept |> Enum.reverse() |> Enum.find(&__crosses__(&1, first, last)) do
+          {:ok, {entry, first, last}}
+        else
+          {:error, reason} ->
+            {:error, "#{name}: #{reason}"}
 
-        cond do
-          first == nil ->
-            {:error, "#{name}: #{inspect(start)} is no block's id"}
-
-          last == nil ->
-            {:error, "#{name}: #{inspect(stop)} is no block's id"}
-
-          last < first ->
-            {:error, "#{name}: it ends before it starts"}
-
-          # The first crossed entry in list order, as every client reports it.
-          crossed = kept |> Enum.reverse() |> Enum.find(crosses?) ->
-            {%{start: crossed_start, end: crossed_stop}, _a, _b} = crossed
-
-            {:error,
-             "#{name} crosses the markup from #{inspect(crossed_start)} to #{inspect(crossed_stop)}"}
-
-          true ->
-            {:ok, {entry, first, last}}
+          {%{start: crossed_start, end: crossed_stop}, _first, _last} ->
+            {:error, ~s(#{name} crosses the markup from "#{crossed_start}" to "#{crossed_stop}")}
         end
       end
+
+      defp __crosses__({_entry, a, b}, first, last),
+        do: (a < first and first <= b and b < last) or (first < a and a <= last and last < b)
 
       unquote_splicing(records)
     end

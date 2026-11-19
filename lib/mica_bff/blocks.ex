@@ -13,9 +13,9 @@ defmodule MicaBff.Blocks do
   props. Grouping is markup beside the blocks (`MicaBff.Markup`), by those ids.
 
   `section_begin` and `section_end` are how older apps group: the blocks between
-  them, nesting, a group's look cascading as in CSS. The server no longer sends them
-  and they are removed once the minimum app version reads markup; `border` and
-  `background` markup replace them (ADR 0001, "Markup").
+  them, nesting, a group's look cascading as in CSS. A server that sends markup sends
+  no markers; they are removed once the minimum app version reads markup. `border`
+  and `background` markup replace them (ADR 0001, "Markup").
 
   A `filter` or `search` narrows down the page it is on by going to that page with
   the filter applied: the server builds the links, with the page's other query

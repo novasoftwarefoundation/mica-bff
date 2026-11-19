@@ -115,16 +115,12 @@ extension <%= @namespace %> {
             self.markup = markup
         }
 
-        /// Why the markup doesn't hold, the first thing that doesn't, or nil when it does:
-        /// two blocks with one id, an entry whose `start` or `end` is no block's id, one that
-        /// ends before it starts, or one that crosses an entry before it. Markup nests as in
-        /// XML: two entries share no block, or one covers all of the other. Entries of a kind
-        /// this app doesn't know are left out.
+        /// Why the markup doesn't hold, for the first entry that doesn't, or nil when it does:
+        /// an entry whose `start` or `end` is no block's id or an id two blocks have, one
+        /// that ends before it starts, or one that crosses an entry before it. Markup nests as
+        /// in XML: two entries share no block, or one covers all of the other. Entries of a
+        /// kind this app doesn't know are left out.
         func check() -> Swift.String? {
-            var seen = Swift.Set<Swift.String>()
-            for case let id? in ids.prefix(blocks.count) where !seen.insert(id).inserted {
-                return "two blocks have id \"\(id)\""
-            }
             let positions = idPositions()
             var kept: [Span] = []
             for entry in known {
@@ -183,25 +179,39 @@ extension <%= @namespace %> {
             markup.filter { if case .unknown = $0.kind { false } else { true } }
         }
 
-        /// Where each id is on the page. An id two blocks have points at neither.
-        private func idPositions() -> [Swift.String: Swift.Int] {
-            var counts: [Swift.String: Swift.Int] = [:]
-            for case let id? in ids.prefix(blocks.count) { counts[id, default: 0] += 1 }
-            var positions: [Swift.String: Swift.Int] = [:]
+        /// Where each id is on the page; nil for an id two blocks have.
+        private func idPositions() -> [Swift.String: Swift.Int?] {
+            var positions: [Swift.String: Swift.Int?] = [:]
             for (position, id) in ids.prefix(blocks.count).enumerated() {
-                if let id, counts[id] == 1 { positions[id] = position }
+                guard let id else { continue }
+                if positions[id] == nil {
+                    positions[id] = position
+                } else {
+                    positions.updateValue(nil, forKey: id)
+                }
             }
             return positions
         }
 
-        /// The positions an entry covers, when it nests with the entries `kept` before it.
-        private func span(_ entry: Markup, _ positions: [Swift.String: Swift.Int], _ kept: [Span]) -> Swift.Result<Span, Problem> {
-            let name = "markup from \"\(entry.start)\" to \"\(entry.end)\""
-            guard let first = positions[entry.start] else {
-                return .failure(Problem(reason: "\(name): \"\(entry.start)\" is no block's id"))
+        private func position(_ id: Swift.String, _ positions: [Swift.String: Swift.Int?]) -> Swift.Result<Swift.Int, Problem> {
+            switch positions[id] {
+            case let position??: return .success(position)
+            case .some(.none): return .failure(Problem(reason: "two blocks have id \"\(id)\""))
+            case .none: return .failure(Problem(reason: "\"\(id)\" is no block's id"))
             }
-            guard let last = positions[entry.end] else {
-                return .failure(Problem(reason: "\(name): \"\(entry.end)\" is no block's id"))
+        }
+
+        /// The positions an entry covers, when it nests with the entries `kept` before it.
+        private func span(_ entry: Markup, _ positions: [Swift.String: Swift.Int?], _ kept: [Span]) -> Swift.Result<Span, Problem> {
+            let name = "markup from \"\(entry.start)\" to \"\(entry.end)\""
+            let first: Swift.Int
+            let last: Swift.Int
+            switch (position(entry.start, positions), position(entry.end, positions)) {
+            case (.failure(let problem), _), (.success, .failure(let problem)):
+                return .failure(Problem(reason: "\(name): \(problem.reason)"))
+            case (.success(let start), .success(let end)):
+                first = start
+                last = end
             }
             if last < first { return .failure(Problem(reason: "\(name): it ends before it starts")) }
             let crossed = kept.first { span in

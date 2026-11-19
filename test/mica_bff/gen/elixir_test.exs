@@ -167,10 +167,13 @@ defmodule MicaBff.Gen.ElixirTest do
     end
   end
 
-  test "the view model raises on bad markup and on two blocks with one id" do
+  # A record that repeats in the data costs only the markup on it, never the page.
+  test "the view model raises on bad markup and on markup on an id two blocks have, not on the id alone" do
     ns = namespace_for(MicaBff.Spec)
     %{"blocks" => blocks, "markup" => markup} = fixture("fixtures/pages/bad_markup.json")
     blocks = Enum.map(blocks, &from_wire(ns, &1))
+    border = Module.concat(ns, Border)
+    repeated = blocks ++ [hd(blocks)]
 
     assert_raise ArgumentError,
                  ~r/bad view model: markup from "approved" to "studies" crosses/,
@@ -178,9 +181,16 @@ defmodule MicaBff.Gen.ElixirTest do
                    ns.view_model(blocks, Enum.map(markup, &from_wire(ns, &1)))
                  end
 
-    assert_raise ArgumentError, ~r/bad view model: two blocks have id "rewards"/, fn ->
-      ns.view_model(blocks ++ [hd(blocks)])
-    end
+    assert %{"blocks" => [%{"id" => "rewards"} | _] = sent, "markup" => [_]} =
+             ns.view_model(repeated, [struct!(border, start: "approved", end: "studies")])
+
+    assert length(sent) == 4
+
+    assert_raise ArgumentError,
+                 ~r/bad view model: markup from "rewards" to "approved": two blocks have id "rewards"/,
+                 fn ->
+                   ns.view_model(repeated, [struct!(border, start: "rewards", end: "approved")])
+                 end
   end
 
   test "a block's id and an entry's start and end must be strings" do
