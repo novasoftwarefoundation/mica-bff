@@ -2,8 +2,8 @@ defmodule MicaBff.Schema do
   @moduledoc """
   The schema of the BFF spec, written as a DSL. It plays the role an XSD plays
   for XML: the macros define what a valid spec is, and the modules that `use`
-  them (`MicaBff.Types`, `MicaBff.Blocks`, `MicaBff.Pages`) are the spec, composed
-  by `MicaBff.Spec`.
+  them (`MicaBff.Types`, `MicaBff.Blocks`, `MicaBff.Markup`, `MicaBff.Pages`) are
+  the spec, composed by `MicaBff.Spec`.
 
       defmodule MyBlocks do
         use MicaBff.Schema, types: MyTypes
@@ -17,7 +17,8 @@ defmodule MicaBff.Schema do
   `types:` names a module whose types this one's fields may hold, as if they were
   declared here before everything else.
 
-  - `defblock` declares a block the BFF can send and clients can render.
+  - `defblock` declares a block the BFF can send and clients can render. Every block
+    also has an `id`, next to its type and props, so no field may be named `id`.
   - `field` declares a prop: a snake_case name, a type and `required: true | false`
     (default `false`). A type is a primitive (`:string`, `:integer`, `:float`,
     `:boolean`), an enum (`{:enum, [:accent, :neutral]}`, snake_case values, with
@@ -32,6 +33,10 @@ defmodule MicaBff.Schema do
   - `deftype` declares a nested object with fields like a block's. A type's field
     may hold a type declared before it (`field :photo, :image`) or a list of one
     (`{:list, :image}`), so types never form a cycle.
+  - `defmarkup` declares a kind of markup: an entry over a stretch of a page's
+    blocks, from the block `start` to the block `end`, with fields like a block's
+    (`defmarkup :border do end`). `start` and `end` sit next to its kind and props,
+    so no field may be named either.
   - `defpage` declares a page the BFF serves: always a GET at `/bff/page/<name>`
     that returns a flat list of blocks (`defpage :home` is `GET /bff/page/home`).
     In its `do` block, `param` declares a query parameter with a snake_case name
@@ -41,7 +46,9 @@ defmodule MicaBff.Schema do
   option, a name that isn't a snake_case atom, a duplicate name, a block used as
   a field type or named after a primitive, an enum without values or without a
   fallback among them, a list of anything but a primitive or a declared type, a
-  type used before it is declared, a `field` outside a `defblock` or `deftype`, a
+  type used before it is declared, a `field` outside a `defblock`, `deftype` or
+  `defmarkup`, a field named after a key every block (`id`) or markup entry
+  (`start`, `end`) has, a
   `param` outside a `defpage` or of a type that isn't a primitive, a declaration
   inside another, and a malformed or out-of-order version. Generators read
   `__schema__/0`, never the source.
@@ -54,10 +61,20 @@ defmodule MicaBff.Schema do
 
     quote do
       import MicaBff.Schema,
-        only: [defblock: 2, deftype: 2, defpage: 1, defpage: 2, field: 2, field: 3, param: 2]
+        only: [
+          defblock: 2,
+          deftype: 2,
+          defmarkup: 2,
+          defpage: 1,
+          defpage: 2,
+          field: 2,
+          field: 3,
+          param: 2
+        ]
 
       Module.register_attribute(__MODULE__, :mica_bff_blocks, accumulate: true)
       Module.register_attribute(__MODULE__, :mica_bff_types, accumulate: true)
+      Module.register_attribute(__MODULE__, :mica_bff_markup, accumulate: true)
       Module.register_attribute(__MODULE__, :mica_bff_pages, accumulate: true)
 
       # The other module's types, read while this one compiles.
@@ -75,6 +92,9 @@ defmodule MicaBff.Schema do
 
   defmacro defblock(name, do: body),
     do: record(:defblock, :mica_bff_blocks, name, body, __CALLER__)
+
+  defmacro defmarkup(name, do: body),
+    do: record(:defmarkup, :mica_bff_markup, name, body, __CALLER__)
 
   defmacro deftype(name, do: body),
     do: record(:deftype, :mica_bff_types, name, body, __CALLER__)
@@ -142,13 +162,13 @@ defmodule MicaBff.Schema do
 
     quote do
       unless match?(
-               {kind, _} when kind in [:defblock, :deftype],
+               {kind, _} when kind in [:defblock, :deftype, :defmarkup],
                Module.get_attribute(__MODULE__, :mica_bff_open)
              ) do
         MicaBff.Schema.__fail__(
           __ENV__.file,
           unquote(line),
-          "field #{inspect(unquote(name))} outside a defblock or deftype"
+          "field #{inspect(unquote(name))} outside a defblock, deftype or defmarkup"
         )
       end
 
@@ -223,17 +243,24 @@ defmodule MicaBff.Schema do
     get = &(env.module |> Module.get_attribute(&1) |> Enum.reverse())
     blocks = get.(:mica_bff_blocks)
     types = get.(:mica_bff_types)
+    markup = get.(:mica_bff_markup)
     pages = get.(:mica_bff_pages)
     external = Module.get_attribute(env.module, :mica_bff_external_types)
 
-    # One `seen` across blocks and types: in Swift and Elixir both are types in one namespace.
-    seen = validate_blocks!(blocks, types, external, env.file)
+    # One `seen` across blocks, markup and types: in Swift and Elixir all are types in one
+    # namespace.
+    seen = validate_records!(blocks, "block", [:id], blocks, types, external, %{}, env.file)
+
+    seen =
+      validate_records!(markup, "markup", [:start, :end], blocks, types, external, seen, env.file)
+
     validate_types!(types, external, seen, env.file)
     validate_pages!(pages, env.file)
 
     # Line numbers are only for error messages; generators get the plain spec.
     schema = %{
       blocks: Enum.map(blocks, &plain_record/1),
+      markup: Enum.map(markup, &plain_record/1),
       pages:
         for %{name: name, params: params} <- pages do
           %{name: name, path: "/bff/page/#{name}", params: plain_fields(params)}
@@ -242,7 +269,7 @@ defmodule MicaBff.Schema do
     }
 
     quote do
-      @doc "The spec as plain data (blocks, pages and types), for generators and validation."
+      @doc "The spec as plain data (blocks, markup, pages and types), for generators and validation."
       def __schema__, do: unquote(Macro.escape(schema))
     end
   end
@@ -277,23 +304,32 @@ defmodule MicaBff.Schema do
   end
 
   # Blocks have no children: a page is a flat list of blocks, so no field may hold a block.
-  defp validate_blocks!(blocks, types, external, file) do
+  # `reserved` are the keys every block or markup entry has next to its props.
+  defp validate_records!(records, kind, reserved, blocks, types, external, seen, file) do
     block_names = Enum.map(blocks, & &1.name)
     # A block may hold any type: no type holds a block, so there is no cycle.
     types = external ++ Enum.map(types, & &1.name)
     allowed = %{blocks: block_names, types: types, all_types: types}
 
-    Enum.reduce(blocks, %{}, fn %{name: name, fields: fields} = block, seen ->
-      fail = &__fail__(file, block.line, &1)
-      check_record_name!(name, "block", fail)
+    Enum.reduce(records, seen, fn %{name: name, fields: fields} = record, seen ->
+      fail = &__fail__(file, record.line, &1)
+      check_record_name!(name, kind, fail)
       validate_fields!(inspect(name), fields, allowed, file)
+
+      for %{name: field, line: line} <- fields, field in reserved do
+        __fail__(
+          file,
+          line,
+          "#{kind} #{inspect(name)} can't have field #{inspect(field)}: every #{kind} has it next to its props"
+        )
+      end
 
       unique!(
         seen,
         name,
         fail,
         "#{inspect(name)} is defined twice",
-        &"the spec has blocks #{inspect(&1)} and #{inspect(name)}, which clients both name #{&2}"
+        &"the spec has #{inspect(&1)} and #{inspect(name)}, which clients both name #{&2}"
       )
     end)
   end

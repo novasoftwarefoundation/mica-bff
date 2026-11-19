@@ -2,10 +2,10 @@ defmodule MicaBff.Compat do
   @moduledoc """
   What makes a new spec break clients of an older one (ADR 0001, "Compatibility").
   Takes two `__schema__/0` values and returns one message per violation. Pages are
-  not compared, and an older schema may lack `pages`, `types`, `since` or
+  not compared, and an older schema may lack `pages`, `types`, `markup`, `since` or
   `deprecated`.
 
-  Breaking: removing a block or type, and for the fields of a block or type:
+  Breaking: removing a block, markup kind or type, and for the fields of one:
   removing a field that wasn't deprecated in the old schema, changing a field's
   type, making an optional field required, and adding a required field to an
   existing one. Anything else is compatible, also adding or removing an enum's
@@ -15,6 +15,7 @@ defmodule MicaBff.Compat do
 
   def breaking_changes(old_schema, new_schema) do
     record_changes(old_schema.blocks, new_schema.blocks, "block") ++
+      record_changes(Map.get(old_schema, :markup, []), Map.get(new_schema, :markup, []), "markup") ++
       record_changes(Map.get(old_schema, :types, []), Map.get(new_schema, :types, []), "type")
   end
 

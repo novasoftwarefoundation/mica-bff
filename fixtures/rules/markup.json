@@ -1,0 +1,92 @@
+[
+  {
+    "name": "no markup",
+    "ids": ["a", "b"],
+    "markup": [],
+    "check": null,
+    "tree": ["a", "b"]
+  },
+  {
+    "name": "parts with a border inside each, as in the home page",
+    "ids": ["nba", "rewards", "pending", "studies", "study-7"],
+    "markup": [
+      {"kind": "part", "start": "nba", "end": "pending"},
+      {"kind": "border", "start": "rewards", "end": "pending"},
+      {"kind": "part", "start": "studies", "end": "study-7"},
+      {"kind": "border", "start": "studies", "end": "study-7"}
+    ],
+    "check": null,
+    "tree": [
+      {"markup": 0, "children": ["nba", {"markup": 1, "children": ["rewards", "pending"]}]},
+      {"markup": 2, "children": [{"markup": 3, "children": ["studies", "study-7"]}]}
+    ]
+  },
+  {
+    "name": "entries over the same stretch nest in list order, the first outermost",
+    "ids": ["a", "b"],
+    "markup": [
+      {"kind": "background", "start": "a", "end": "b"},
+      {"kind": "border", "start": "a", "end": "b"}
+    ],
+    "check": null,
+    "tree": [{"markup": 0, "children": [{"markup": 1, "children": ["a", "b"]}]}]
+  },
+  {
+    "name": "an inner entry listed before its outer one still nests inside it",
+    "ids": ["a", "b", "c"],
+    "markup": [
+      {"kind": "border", "start": "b", "end": "b"},
+      {"kind": "part", "start": "a", "end": "c"}
+    ],
+    "check": null,
+    "tree": [{"markup": 1, "children": ["a", {"markup": 0, "children": ["b"]}, "c"]}]
+  },
+  {
+    "name": "a block without an id shows, and can't be a boundary",
+    "ids": ["a", null, "b"],
+    "markup": [{"kind": "border", "start": "a", "end": "b"}],
+    "check": null,
+    "tree": [{"markup": 0, "children": ["a", null, "b"]}]
+  },
+  {
+    "name": "crossing entries: the later one is left out",
+    "ids": ["a", "b", "c"],
+    "markup": [
+      {"kind": "border", "start": "a", "end": "b"},
+      {"kind": "background", "start": "b", "end": "c"}
+    ],
+    "check": "markup from \"b\" to \"c\" crosses the markup from \"a\" to \"b\"",
+    "tree": [{"markup": 0, "children": ["a", "b"]}, "c"]
+  },
+  {
+    "name": "a start that is no block's id",
+    "ids": ["a", "b"],
+    "markup": [{"kind": "border", "start": "x", "end": "b"}],
+    "check": "markup from \"x\" to \"b\": \"x\" is no block's id",
+    "tree": ["a", "b"]
+  },
+  {
+    "name": "an end that is no block's id",
+    "ids": ["a", "b"],
+    "markup": [{"kind": "border", "start": "a", "end": "x"}],
+    "check": "markup from \"a\" to \"x\": \"x\" is no block's id",
+    "tree": ["a", "b"]
+  },
+  {
+    "name": "an entry that ends before it starts",
+    "ids": ["a", "b"],
+    "markup": [{"kind": "border", "start": "b", "end": "a"}],
+    "check": "markup from \"b\" to \"a\": it ends before it starts",
+    "tree": ["a", "b"]
+  },
+  {
+    "name": "two blocks with one id: an entry on that id is left out, the others stay",
+    "ids": ["a", "b", "a", "c"],
+    "markup": [
+      {"kind": "border", "start": "a", "end": "b"},
+      {"kind": "background", "start": "c", "end": "c"}
+    ],
+    "check": "two blocks have id \"a\"",
+    "tree": ["a", "b", "a", {"markup": 1, "children": ["c"]}]
+  }
+]
