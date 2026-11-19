@@ -60,7 +60,7 @@ defmodule MicaBff.Gen.Elixir do
     quote do
       require unquote(spec)
 
-      @doc "The pages the BFF serves, in spec order: each is a GET at its path that returns a flat list of blocks."
+      @doc "The pages the BFF serves, in spec order: each is a GET at its path that returns its view model, blocks and markup."
       @spec pages() :: [%{name: atom, path: String.t(), params: [%{name: atom, type: atom}]}]
       def pages, do: unquote(Macro.escape(pages))
 
@@ -276,7 +276,8 @@ defmodule MicaBff.Gen.Elixir do
           last < first ->
             {:error, "#{name}: it ends before it starts"}
 
-          crossed = Enum.find(kept, crosses?) ->
+          # The first crossed entry in list order, as every client reports it.
+          crossed = kept |> Enum.reverse() |> Enum.find(crosses?) ->
             {%{start: crossed_start, end: crossed_stop}, _a, _b} = crossed
 
             {:error,

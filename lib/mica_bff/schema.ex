@@ -38,7 +38,8 @@ defmodule MicaBff.Schema do
     (`defmarkup :border do end`). `start` and `end` sit next to its kind and props,
     so no field may be named either.
   - `defpage` declares a page the BFF serves: always a GET at `/bff/page/<name>`
-    that returns a flat list of blocks (`defpage :home` is `GET /bff/page/home`).
+    that returns its view model, blocks and markup (`defpage :home` is
+    `GET /bff/page/home`).
     In its `do` block, `param` declares a query parameter with a snake_case name
     and a primitive type: `param :year, :integer` reads `?year=2025`.
 

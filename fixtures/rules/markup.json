@@ -59,6 +59,17 @@
     "tree": [{"markup": 0, "children": ["a", "b"]}, "c"]
   },
   {
+    "name": "an entry that crosses several: the first in list order is named",
+    "ids": ["a", "b", "c", "d"],
+    "markup": [
+      {"kind": "part", "start": "a", "end": "c"},
+      {"kind": "border", "start": "b", "end": "c"},
+      {"kind": "background", "start": "c", "end": "d"}
+    ],
+    "check": "markup from \"c\" to \"d\" crosses the markup from \"a\" to \"c\"",
+    "tree": [{"markup": 0, "children": ["a", {"markup": 1, "children": ["b", "c"]}]}, "d"]
+  },
+  {
     "name": "a start that is no block's id",
     "ids": ["a", "b"],
     "markup": [{"kind": "border", "start": "x", "end": "b"}],

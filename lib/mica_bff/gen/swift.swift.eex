@@ -122,7 +122,7 @@ extension <%= @namespace %> {
         /// this app doesn't know are left out.
         func check() -> Swift.String? {
             var seen = Swift.Set<Swift.String>()
-            for case let id? in ids where !seen.insert(id).inserted {
+            for case let id? in ids.prefix(blocks.count) where !seen.insert(id).inserted {
                 return "two blocks have id \"\(id)\""
             }
             let positions = idPositions()
@@ -186,7 +186,7 @@ extension <%= @namespace %> {
         /// Where each id is on the page. An id two blocks have points at neither.
         private func idPositions() -> [Swift.String: Swift.Int] {
             var counts: [Swift.String: Swift.Int] = [:]
-            for case let id? in ids { counts[id, default: 0] += 1 }
+            for case let id? in ids.prefix(blocks.count) { counts[id, default: 0] += 1 }
             var positions: [Swift.String: Swift.Int] = [:]
             for (position, id) in ids.prefix(blocks.count).enumerated() {
                 if let id, counts[id] == 1 { positions[id] = position }
