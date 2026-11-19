@@ -17,9 +17,15 @@ defmodule MicaBff.Gen.Swift do
   - An enum prop is a `String` enum nested in its block's struct, named after the
     field (`tone` is `Tone`); a value the app doesn't know decodes to the enum's
     fallback. A list prop is a Swift array; an element that doesn't decode is
-    dropped and the rest of the list stays (`LossyList`, only generated when a
-    field has a list).
+    dropped and the rest of the list stays (`LossyList`).
   - One `Codable` struct per type, decoded like a block's props.
+  - `struct Page`: a page as the BFF sends it, `{"blocks": [...], "markup": [...]}`:
+    its blocks, each block's id (`nil` when it has none) and its `Markup`, an entry
+    per stretch of blocks, with its `Kind`: one case per markup kind, with a struct
+    decoded like a block, plus `.unknown(kind:)`. An entry without a string `start`
+    and `end` is dropped. `Page.tree()` is the nested tree to render (`Node`): it
+    leaves out an entry of a kind the app doesn't know and one that `Page.check()`
+    refuses, and still shows their blocks.
   - snake_case wire names map to camelCase; Swift keywords are escaped. Standard
     names are written as `Swift.String` etc., so a block named `bool` or
     `decoder` can't shadow them inside the namespace.
@@ -43,7 +49,7 @@ defmodule MicaBff.Gen.Swift do
                self super throws true try)
   # Type names the generated code needs itself, or that Swift reserves. `swift` would
   # shadow the Swift module; `coding_keys` the private CodingKeys in Block;
-  # `lossy_list` the list decoding helper.
+  # `lossy_list` the list decoding helper; `kind` Markup's nested Kind.
   @reserved [
     :block,
     :unknown,
@@ -53,7 +59,11 @@ defmodule MicaBff.Gen.Swift do
     :any,
     :swift,
     :coding_keys,
-    :lossy_list
+    :lossy_list,
+    :page,
+    :markup,
+    :node,
+    :kind
   ]
   @block_decoding """
   // Every prop is optional here, also a required one (ADR 0001, tolerant reader): one
@@ -69,13 +79,14 @@ defmodule MicaBff.Gen.Swift do
 
   def default_namespace, do: @default_namespace
 
-  @doc "Returns the Swift source for the spec's blocks and types."
+  @doc "Returns the Swift source for the spec's blocks, markup kinds and types."
   @spec generate(map, String.t()) :: String.t()
   def generate(%{blocks: blocks} = schema, namespace \\ @default_namespace) do
     types = Map.get(schema, :types, [])
+    markup = Map.get(schema, :markup, [])
     type_names = Enum.map(types, & &1.name)
 
-    for {kind, records} <- [block: blocks, type: types],
+    for {kind, records} <- [block: blocks, markup: markup, type: types],
         %{name: name} <- records,
         name in @reserved do
       raise ArgumentError,
@@ -84,8 +95,9 @@ defmodule MicaBff.Gen.Swift do
     end
 
     blocks = Enum.map(blocks, &record(&1, namespace, type_names, :block))
+    markup = Enum.map(markup, &record(&1, namespace, type_names, :markup))
     types = Enum.map(types, &record(&1, namespace, type_names, :type))
-    records = blocks ++ types
+    records = blocks ++ markup ++ types
 
     # An enum's type is nested in its record's struct, so there it shadows these.
     reserved_enums = [namespace | Enum.map(@reserved, &type_name/1)]
@@ -106,20 +118,22 @@ defmodule MicaBff.Gen.Swift do
       header: header,
       namespace: namespace,
       blocks: blocks,
+      markup: markup,
       structs: Enum.map(records, &indent(&1.source, 4)),
-      decoders: Enum.filter(records, &(&1.fields != [])),
-      lossy: Enum.any?(records, fn record -> Enum.any?(record.fields, & &1.list) end)
+      decoders: Enum.filter(records, &(&1.fields != []))
     ]
     |> template()
     |> String.trim_trailing()
     |> Kernel.<>("\n")
   end
 
-  # A block or type: its struct's source, and what its decoding extension needs.
+  # A block, markup kind or type: its struct's source, and what its decoding extension
+  # needs.
   defp record(%{name: name, fields: fields}, namespace, types, kind) do
     {doc, conforms, comment} =
       case kind do
         :block -> {"Block `#{name}`.", "Swift.Decodable", @block_decoding}
+        :markup -> {"Markup `#{name}`.", "Swift.Decodable", @block_decoding}
         :type -> {"Type `#{name}`.", "Swift.Codable", @record_decoding}
       end
 
@@ -183,7 +197,6 @@ defmodule MicaBff.Gen.Swift do
       key: key,
       swift_type: swift_type,
       decode: decode,
-      list: values != "",
       enum: enum(field)
     }
   end

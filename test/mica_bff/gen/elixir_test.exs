@@ -59,20 +59,23 @@ defmodule MicaBff.Gen.ElixirTest do
 
   defp badge_props(attrs) do
     badge = Module.concat(namespace_for(Spec), Badge)
-    badge.to_map(struct!(badge, attrs))["props"]
+    badge.to_map(struct!(badge, [id: "badge"] ++ attrs))["props"]
   end
 
   test "an enum is an atom in the struct and a string on the wire; a list is sent as it is" do
     tagged = Module.concat(namespace_for(Spec), Tagged)
 
-    assert tagged.to_map(struct!(tagged, tone: :in_progress, status: :on, tags: ["a", "b"])) ==
+    assert tagged.to_map(
+             struct!(tagged, id: "t", tone: :in_progress, status: :on, tags: ["a", "b"])
+           ) ==
              %{
+               "id" => "t",
                "type" => "tagged",
                "props" => %{"tone" => "in_progress", "status" => "on", "tags" => ["a", "b"]}
              }
 
-    assert tagged.to_map(struct!(tagged, tone: :success, tags: [])) ==
-             %{"type" => "tagged", "props" => %{"tone" => "success", "tags" => []}}
+    assert tagged.to_map(struct!(tagged, id: "t", tone: :success, tags: [])) ==
+             %{"id" => "t", "type" => "tagged", "props" => %{"tone" => "success", "tags" => []}}
   end
 
   defp block_module(namespace, %{name: name}),
@@ -88,51 +91,147 @@ defmodule MicaBff.Gen.ElixirTest do
     Enum.map(imports, fn {module, _function, _arity} -> Atom.to_string(module) end)
   end
 
-  test "every block and type gets its module, with its fields as struct keys" do
+  test "every block, markup kind and type gets its module, with its keys and fields as struct keys" do
     {namespace, compiled} = compile_use(", spec: MicaBff.Spec")
-    %{blocks: blocks, types: types} = MicaBff.Spec.__schema__()
-    expected = [namespace | Enum.map(blocks ++ types, &block_module(namespace, &1))]
+    %{blocks: blocks, markup: markup, types: types} = MicaBff.Spec.__schema__()
+    expected = [namespace | Enum.map(blocks ++ markup ++ types, &block_module(namespace, &1))]
 
     assert compiled |> Keyword.keys() |> Enum.sort() == Enum.sort(expected)
 
-    for record <- blocks ++ types do
-      assert struct_keys(block_module(namespace, record)) == field_names(record)
+    for {records, outer} <- [{blocks, [:id]}, {markup, [:end, :start]}, {types, []}],
+        record <- records do
+      assert struct_keys(block_module(namespace, record)) ==
+               Enum.sort(outer ++ field_names(record))
     end
   end
 
-  # Every section prop is optional, so the fixtures also check that nil props are left out.
-  # An enum prop goes in as an atom and a type as its struct, as the server sets them,
-  # so their encoding is checked too.
-  test "every fixture encodes back to itself through its module" do
-    ns = namespace_for(MicaBff.Spec)
-    %{blocks: blocks, types: types} = MicaBff.Spec.__schema__()
+  # The struct the server builds for a block or markup entry on the wire. An enum prop
+  # goes in as an atom and a type as its struct, so their encoding is checked too.
+  defp from_wire(ns, wire) do
+    %{blocks: blocks, markup: markup, types: types} = MicaBff.Spec.__schema__()
     types = Map.new(types, &{&1.name, block_module(ns, &1)})
 
-    type! = fn module, map ->
-      struct!(module, Map.new(map, fn {k, v} -> {String.to_existing_atom(k), v} end))
-    end
+    atomize = fn map -> Map.new(map, fn {k, v} -> {String.to_existing_atom(k), v} end) end
 
     value = fn
-      %{type: {:enum, _}}, v -> String.to_existing_atom(v)
-      %{type: {:list, t}}, v when is_map_key(types, t) -> Enum.map(v, &type!.(types[t], &1))
-      %{type: t}, v when is_map_key(types, t) -> type!.(types[t], v)
-      _field, v -> v
+      %{type: {:enum, _}}, v ->
+        String.to_existing_atom(v)
+
+      %{type: {:list, t}}, v when is_map_key(types, t) ->
+        Enum.map(v, &struct!(types[t], atomize.(&1)))
+
+      %{type: t}, v when is_map_key(types, t) ->
+        struct!(types[t], atomize.(v))
+
+      _field, v ->
+        v
     end
+
+    {name, outer} =
+      case wire do
+        %{"type" => type} -> {type, Map.take(wire, ["id"])}
+        %{"kind" => kind} -> {kind, Map.take(wire, ["start", "end"])}
+      end
+
+    %{fields: fields} = Enum.find(blocks ++ markup, &(to_string(&1.name) == name))
+    fields = Map.new(fields, &{to_string(&1.name), &1})
+    props = Map.new(wire["props"], fn {k, v} -> {k, value.(fields[k], v)} end)
+
+    struct!(Module.concat(ns, Macro.camelize(name)), atomize.(Map.merge(outer, props)))
+  end
+
+  defp fixture(path), do: path |> File.read!() |> JSON.decode!()
+
+  # Every section prop is optional, so the fixtures also check that nil props are left out.
+  test "every block fixture encodes back to itself through its module" do
+    ns = namespace_for(MicaBff.Spec)
 
     for path <- Path.wildcard("fixtures/*.json") do
-      %{"type" => type, "props" => props} = fixture = path |> File.read!() |> JSON.decode!()
-      %{fields: fields} = Enum.find(blocks, &(to_string(&1.name) == type))
-      fields = Map.new(fields, &{to_string(&1.name), &1})
-      module = Module.concat(ns, Macro.camelize(type))
-
-      block =
-        struct!(
-          module,
-          Map.new(props, fn {k, v} -> {String.to_existing_atom(k), value.(fields[k], v)} end)
-        )
-
-      assert module.to_map(block) == fixture, path
+      %module{} = block = from_wire(ns, fixture(path))
+      assert module.to_map(block) == fixture(path), path
     end
+  end
+
+  test "every page fixture with good markup is the view model of its blocks and markup" do
+    ns = namespace_for(MicaBff.Spec)
+
+    for path <- ["fixtures/pages/home.json", "fixtures/pages/home_parts.json"] do
+      %{"blocks" => blocks, "markup" => markup} = page = fixture(path)
+
+      assert ns.view_model(
+               Enum.map(blocks, &from_wire(ns, &1)),
+               Enum.map(markup, &from_wire(ns, &1))
+             ) ==
+               page,
+             path
+    end
+  end
+
+  # A record that repeats in the data costs only the markup on it, never the page.
+  test "the view model raises on bad markup and on markup on an id two blocks have, not on the id alone" do
+    ns = namespace_for(MicaBff.Spec)
+    %{"blocks" => blocks, "markup" => markup} = fixture("fixtures/pages/bad_markup.json")
+    blocks = Enum.map(blocks, &from_wire(ns, &1))
+    border = Module.concat(ns, Border)
+    repeated = blocks ++ [hd(blocks)]
+
+    assert_raise ArgumentError,
+                 ~r/bad view model: markup from "approved" to "studies" crosses/,
+                 fn ->
+                   ns.view_model(blocks, Enum.map(markup, &from_wire(ns, &1)))
+                 end
+
+    assert %{"blocks" => [%{"id" => "rewards"} | _] = sent, "markup" => [_]} =
+             ns.view_model(repeated, [struct!(border, start: "approved", end: "studies")])
+
+    assert length(sent) == 4
+
+    assert_raise ArgumentError,
+                 ~r/bad view model: markup from "rewards" to "approved": two blocks have id "rewards"/,
+                 fn ->
+                   ns.view_model(repeated, [struct!(border, start: "rewards", end: "approved")])
+                 end
+  end
+
+  test "a block's id and an entry's start and end must be strings" do
+    ns = namespace_for(MicaBff.Spec)
+    section = Module.concat(ns, Section)
+    border = Module.concat(ns, Border)
+
+    assert_raise ArgumentError, ~r/Section: id must be a string, got nil/, fn ->
+      ns.view_model([struct!(section, id: nil)])
+    end
+
+    assert_raise ArgumentError, ~r/Border: end must be a string, got 7/, fn ->
+      border.to_map(struct!(border, start: "a", end: 7))
+    end
+  end
+
+  # The rules as fixtures, so every client checks the same cases (the Swift test reads them too).
+  test "check and tree follow the markup rules" do
+    ns = namespace_for(MicaBff.Spec)
+
+    for %{"name" => name, "ids" => ids, "markup" => markup, "check" => check, "tree" => tree} <-
+          fixture("fixtures/rules/markup.json") do
+      entries = Enum.map(markup, &%{kind: &1["kind"], start: &1["start"], end: &1["end"]})
+
+      assert ns.check(ids, entries) == if(check, do: {:error, check}, else: :ok), name
+      assert wire_tree(ns.tree(ids, entries), entries) == tree, name
+    end
+  end
+
+  # A tree in the fixtures' form: a block is its id, markup is its index in the list.
+  defp wire_tree(nodes, entries) do
+    Enum.map(nodes, fn
+      {:block, id} ->
+        id
+
+      {:markup, entry, children} ->
+        %{
+          "markup" => Enum.find_index(entries, &(&1 == entry)),
+          "children" => wire_tree(children, entries)
+        }
+    end)
   end
 
   test "a block's type, a type's types and enums encode as plain JSON objects, nil optionals left out" do
@@ -141,6 +240,7 @@ defmodule MicaBff.Gen.ElixirTest do
 
     block =
       struct!(album,
+        id: "album",
         gallery:
           struct!(gallery,
             cover: struct!(image, url: "/a.png"),
@@ -150,6 +250,7 @@ defmodule MicaBff.Gen.ElixirTest do
       )
 
     assert album.to_map(block) == %{
+             "id" => "album",
              "type" => "album",
              "props" => %{
                "gallery" => %{
@@ -173,14 +274,18 @@ defmodule MicaBff.Gen.ElixirTest do
     [album, gallery] = Enum.map([Album, Gallery], &Module.concat(ns, &1))
 
     assert_raise ArgumentError, ~r/Gallery: required prop cover is nil/, fn ->
-      album.to_map(struct!(album, gallery: struct!(gallery, cover: nil)))
+      album.to_map(struct!(album, id: "album", gallery: struct!(gallery, cover: nil)))
     end
   end
 
   test "a block without fields encodes to empty props" do
     divider = Module.concat(namespace_for(Spec), Divider)
 
-    assert divider.to_map(struct!(divider, [])) == %{"type" => "divider", "props" => %{}}
+    assert divider.to_map(struct!(divider, id: "d")) == %{
+             "id" => "d",
+             "type" => "divider",
+             "props" => %{}
+           }
   end
 
   test "required fields are enforced" do
@@ -191,9 +296,9 @@ defmodule MicaBff.Gen.ElixirTest do
 
   test "a key put on a block that the spec doesn't have is not sent" do
     badge = Module.concat(namespace_for(Spec), Badge)
-    block = Map.put(struct!(badge, label: "x"), :participant_id, 42)
+    block = Map.put(struct!(badge, id: "b", label: "x"), :participant_id, 42)
 
-    assert badge.to_map(block) == %{"type" => "badge", "props" => %{"label" => "x"}}
+    assert badge.to_map(block) == %{"id" => "b", "type" => "badge", "props" => %{"label" => "x"}}
   end
 
   test "an unknown field fails at compile time" do

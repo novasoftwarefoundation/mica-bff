@@ -29,9 +29,204 @@ extension <%= @namespace %> {
             }
         }
     }
+
+    /// An entry of a page's markup: it covers the blocks from the one with id `start` to
+    /// the one with id `end`, both included. Decoding fails without a string `start` and
+    /// `end`, so a page drops the entry; a kind this app doesn't know becomes `.unknown`.
+    struct Markup: Swift.Decodable, Swift.Equatable, Swift.Sendable {
+        let start: Swift.String
+        let end: Swift.String
+        let kind: Kind
+
+        enum Kind: Swift.Equatable, Swift.Sendable {
+<%= for kind <- @markup do %>            case <%= kind.case %>(<%= kind.type %>)
+<% end %>            case unknown(kind: Swift.String)
+        }
+
+        private enum CodingKeys: Swift.String, Swift.CodingKey {
+            case kind, start, end, props
+        }
+
+        init(from decoder: any Swift.Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            start = try container.decode(Swift.String.self, forKey: .start)
+            end = try container.decode(Swift.String.self, forKey: .end)
+            let kind = (try? container.decode(Swift.String.self, forKey: .kind)) ?? ""
+            switch kind {
+<%= for kind <- @markup do %>            case "<%= kind.name %>":
+                self.kind = .<%= kind.case %>((try? container.decode(<%= kind.type %>.self, forKey: .props))
+                    ?? <%= kind.none %>)
+<% end %>            default:
+                self.kind = .unknown(kind: kind)
+            }
+        }
+
+        init(start: Swift.String, end: Swift.String, kind: Kind) {
+            self.start = start
+            self.end = end
+            self.kind = kind
+        }
+    }
+
+    /// A page in the nested form a client renders: a block with its id, or markup with
+    /// what it covers.
+    indirect enum Node: Swift.Equatable, Swift.Sendable {
+        case block(id: Swift.String?, Block)
+        case markup(Markup, [Node])
+    }
+
+    /// A page as the BFF sends it: its blocks, each block's id (`nil` when it has none) and
+    /// the markup beside them.
+    struct Page: Swift.Decodable, Swift.Equatable, Swift.Sendable {
+        let blocks: [Block]
+        let ids: [Swift.String?]
+        let markup: [Markup]
+
+        private enum CodingKeys: Swift.String, Swift.CodingKey {
+            case blocks, markup
+        }
+
+        /// A block with its id, as it is in `blocks` on the wire.
+        private struct Item: Swift.Decodable {
+            let id: Swift.String?
+            let block: Block
+
+            private enum CodingKeys: Swift.String, Swift.CodingKey {
+                case id
+            }
+
+            init(from decoder: any Swift.Decoder) throws {
+                id = try? decoder.container(keyedBy: CodingKeys.self).decodeIfPresent(Swift.String.self, forKey: .id)
+                block = try Block(from: decoder)
+            }
+        }
+
+        init(from decoder: any Swift.Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let items = (try? container.decodeIfPresent([Item].self, forKey: .blocks)) ?? []
+            blocks = items.map(\.block)
+            ids = items.map(\.id)
+            markup = (try? container.decodeIfPresent(LossyList<Markup>.self, forKey: .markup))?.values ?? []
+        }
+
+        init(blocks: [Block], ids: [Swift.String?], markup: [Markup]) {
+            self.blocks = blocks
+            self.ids = ids
+            self.markup = markup
+        }
+
+        /// Why the markup doesn't hold, for the first entry that doesn't, or nil when it does:
+        /// an entry whose `start` or `end` is no block's id or an id two blocks have, one
+        /// that ends before it starts, or one that crosses an entry before it. Markup nests as
+        /// in XML: two entries share no block, or one covers all of the other. Entries of a
+        /// kind this app doesn't know are left out.
+        func check() -> Swift.String? {
+            let positions = idPositions()
+            var kept: [Span] = []
+            for entry in known {
+                switch span(entry, positions, kept) {
+                case .success(let found): kept.append(found)
+                case .failure(let problem): return problem.reason
+                }
+            }
+            return nil
+        }
+
+        /// The page as the nested tree to render, in page order. Entries over the same
+        /// stretch nest in list order, the first outermost. An entry of a kind this app
+        /// doesn't know, or one that `check()` refuses, is left out, and its blocks still show.
+        func tree() -> [Node] {
+            let positions = idPositions()
+            var kept: [Span] = []
+            for entry in known {
+                if case .success(let found) = span(entry, positions, kept) { kept.append(found) }
+            }
+            // Outermost first: by start, the longest first, then in list order.
+            let spans = kept.enumerated()
+                .sorted { ($0.element.first, -$0.element.last, $0.offset) < ($1.element.first, -$1.element.last, $1.offset) }
+                .map(\.element)
+            var next = 0
+            func nodes(_ from: Swift.Int, _ to: Swift.Int) -> [Node] {
+                var result: [Node] = []
+                var position = from
+                while position < to {
+                    if next < spans.count, spans[next].first == position {
+                        let span = spans[next]
+                        next += 1
+                        result.append(.markup(span.entry, nodes(position, span.last + 1)))
+                        position = span.last + 1
+                    } else {
+                        result.append(.block(id: position < ids.count ? ids[position] : nil, blocks[position]))
+                        position += 1
+                    }
+                }
+                return result
+            }
+            return nodes(0, blocks.count)
+        }
+
+        private struct Span {
+            let entry: Markup
+            let first: Swift.Int
+            let last: Swift.Int
+        }
+
+        private struct Problem: Swift.Error {
+            let reason: Swift.String
+        }
+
+        private var known: [Markup] {
+            markup.filter { if case .unknown = $0.kind { false } else { true } }
+        }
+
+        /// Where each id is on the page; nil for an id two blocks have.
+        private func idPositions() -> [Swift.String: Swift.Int?] {
+            var positions: [Swift.String: Swift.Int?] = [:]
+            for (position, id) in ids.prefix(blocks.count).enumerated() {
+                guard let id else { continue }
+                if positions[id] == nil {
+                    positions[id] = position
+                } else {
+                    positions.updateValue(nil, forKey: id)
+                }
+            }
+            return positions
+        }
+
+        private func position(_ id: Swift.String, _ positions: [Swift.String: Swift.Int?]) -> Swift.Result<Swift.Int, Problem> {
+            switch positions[id] {
+            case let position??: return .success(position)
+            case .some(.none): return .failure(Problem(reason: "two blocks have id \"\(id)\""))
+            case .none: return .failure(Problem(reason: "\"\(id)\" is no block's id"))
+            }
+        }
+
+        /// The positions an entry covers, when it nests with the entries `kept` before it.
+        private func span(_ entry: Markup, _ positions: [Swift.String: Swift.Int?], _ kept: [Span]) -> Swift.Result<Span, Problem> {
+            let name = "markup from \"\(entry.start)\" to \"\(entry.end)\""
+            let first: Swift.Int
+            let last: Swift.Int
+            switch (position(entry.start, positions), position(entry.end, positions)) {
+            case (.failure(let problem), _), (.success, .failure(let problem)):
+                return .failure(Problem(reason: "\(name): \(problem.reason)"))
+            case (.success(let start), .success(let end)):
+                first = start
+                last = end
+            }
+            if last < first { return .failure(Problem(reason: "\(name): it ends before it starts")) }
+            let crossed = kept.first { span in
+                (span.first < first && first <= span.last && span.last < last)
+                    || (first < span.first && span.first <= last && last < span.last)
+            }
+            if let crossed {
+                return .failure(Problem(reason: "\(name) crosses the markup from \"\(crossed.entry.start)\" to \"\(crossed.entry.end)\""))
+            }
+            return .success(Span(entry: entry, first: first, last: last))
+        }
+    }
 <%= for source <- @structs do %>
 <%= source %>
-<% end %><%= if @lossy do %>
+<% end %>
     /// A list prop: an element that doesn't decode (a changed type, `null`) is dropped
     /// and the rest of the list stays (ADR 0001).
     struct LossyList<Element: Swift.Decodable>: Swift.Decodable {
@@ -56,7 +251,7 @@ extension <%= @namespace %> {
             init(from decoder: any Swift.Decoder) {}
         }
     }
-<% end %>}
+}
 <%= for record <- @decoders do %>
 <%= record.comment %>
 extension <%= @namespace %>.<%= record.type %> {

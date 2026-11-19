@@ -1,1 +1,1 @@
-{"type": "search", "props": {"name": "query", "to": "/bff/page/marketplace?year=2026", "placeholder": "Search", "value": "sleep"}}
+{"id": "search", "type": "search", "props": {"name": "query", "to": "/bff/page/marketplace?year=2026", "placeholder": "Search", "value": "sleep"}}

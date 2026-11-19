@@ -164,4 +164,20 @@ defmodule MicaBff.CompatTest do
   test "an old schema without types compares on its blocks" do
     assert breaking_changes(%{blocks: [], pages: []}, spec([%{name: :image, fields: []}])) == []
   end
+
+  test "markup kinds follow the rules for blocks; an old schema without markup has none" do
+    old = %{
+      blocks: [],
+      markup: [%{name: :part, fields: [field(:role)]}, %{name: :border, fields: []}]
+    }
+
+    new = %{blocks: [], markup: [%{name: :part, fields: [field(:role, required: true)]}]}
+
+    assert breaking_changes(old, new) == [
+             "part.role: changed from optional to required",
+             "border: markup removed"
+           ]
+
+    assert breaking_changes(%{blocks: []}, old) == []
+  end
 end

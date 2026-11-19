@@ -1,8 +1,8 @@
 defmodule MicaBff.Pages do
   @moduledoc """
   The pages the BFF serves, part of the spec (`MicaBff.Spec`). A page is a GET at
-  `/bff/page/<name>` that returns `{"blocks": [...]}`, with its params as query
-  parameters.
+  `/bff/page/<name>` that returns its view model, `{"blocks": [...], "markup": [...]}`,
+  with its params as query parameters.
   """
   use MicaBff.Schema
 
