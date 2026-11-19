@@ -8,17 +8,18 @@ defmodule MicaBff.Gen.Swift do
   changes its content. The Swift itself is in `swift.swift.eex`.
 
   - `enum Block`: one case per block plus `.unknown(type:)`. Decoding never
-    fails: an unknown type, or a known block whose required props don't decode,
-    becomes `.unknown` (ADR 0001), so one bad block never breaks a page.
-  - One struct per block. Required props are non-optional and must decode.
-    Optional props are Swift optionals: missing, `null` or a value that doesn't
-    decode (e.g. a changed type) all become `nil`, so the block still renders.
+    fails: a type this app doesn't know becomes `.unknown`, and a known block
+    always decodes, with the props it could read (ADR 0001, tolerant reader), so
+    the app never drops a block it can render.
+  - One struct per block, every prop a Swift optional: `required` binds the server
+    only. A prop that is missing, `null` or doesn't decode (e.g. a changed type)
+    becomes `nil`; props that aren't an object give the block with every prop `nil`.
   - An enum prop is a `String` enum nested in its block's struct, named after the
     field (`tone` is `Tone`); a value the app doesn't know decodes to the enum's
     fallback. A list prop is a Swift array; an element that doesn't decode is
     dropped and the rest of the list stays (`LossyList`, only generated when a
     field has a list).
-  - One `Codable` struct per type, decoded like a block.
+  - One `Codable` struct per type, decoded like a block's props.
   - snake_case wire names map to camelCase; Swift keywords are escaped. Standard
     names are written as `Swift.String` etc., so a block named `bool` or
     `decoder` can't shadow them inside the namespace.
@@ -55,13 +56,13 @@ defmodule MicaBff.Gen.Swift do
     :lossy_list
   ]
   @block_decoding """
-  // Required props must decode; an optional prop that doesn't decode (e.g. a changed
-  // type) becomes nil, so the block still renders (ADR 0001). In an extension, so the
-  // memberwise initializer stays available.\
+  // Every prop is optional here, also a required one (ADR 0001, tolerant reader): one
+  // that is missing or doesn't decode becomes nil, so the block still renders. In an
+  // extension, so the memberwise initializer stays available.\
   """
   @record_decoding """
-  // Required fields must decode; an optional field that doesn't decode becomes nil
-  // (ADR 0001). In an extension, so the memberwise initializer stays available.\
+  // Every field is optional here, also a required one (ADR 0001, tolerant reader). In an
+  // extension, so the memberwise initializer stays available.\
   """
 
   EEx.function_from_file(:defp, :template, Path.join(__DIR__, "swift.swift.eex"), [:assigns])
@@ -130,7 +131,7 @@ defmodule MicaBff.Gen.Swift do
       ["/// #{doc}", "struct #{type}: #{conforms}, Swift.Equatable, Swift.Sendable {"] ++
         Enum.map(
           fields,
-          &"    let #{&1.ident}: #{&1.swift_type}#{if &1.required, do: "", else: "?"}"
+          &"    let #{&1.ident}: #{&1.swift_type}?"
         ) ++
         coding_keys(fields) ++ Enum.flat_map(enums, &["" | &1.lines]) ++ ["}"]
 
@@ -139,6 +140,8 @@ defmodule MicaBff.Gen.Swift do
       case: ident(name),
       type: type,
       fields: fields,
+      # The block with every prop nil, for props that aren't an object.
+      none: "#{type}(#{Enum.map_join(fields, ", ", &"#{&1.ident}: nil")})",
       enums: enums,
       comment: comment,
       source: Enum.join(lines, "\n")
@@ -152,7 +155,7 @@ defmodule MicaBff.Gen.Swift do
       Enum.map(fields, &"        case #{&1.key}") ++ ["    }"]
   end
 
-  defp field(%{name: name, type: type, required: required} = field, namespace, types) do
+  defp field(%{name: name, type: type} = field, namespace, types) do
     ident = ident(name)
     key = if camel(name) == to_string(name), do: ident, else: ~s(#{ident} = "#{name}")
 
@@ -171,22 +174,14 @@ defmodule MicaBff.Gen.Swift do
       end
 
     decode =
-      cond do
-        required ->
-          "try container.decode(#{decode_type}.self, forKey: .#{ident})#{values}"
-
-        values == "" ->
-          "try? container.decodeIfPresent(#{decode_type}.self, forKey: .#{ident})"
-
-        true ->
-          "(try? container.decodeIfPresent(#{decode_type}.self, forKey: .#{ident}))?#{values}"
-      end
+      if values == "",
+        do: "try? container.decodeIfPresent(#{decode_type}.self, forKey: .#{ident})",
+        else: "(try? container.decodeIfPresent(#{decode_type}.self, forKey: .#{ident}))?#{values}"
 
     %{
       ident: ident,
       key: key,
       swift_type: swift_type,
-      required: required,
       decode: decode,
       list: values != "",
       enum: enum(field)

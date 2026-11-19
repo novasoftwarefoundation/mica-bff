@@ -11,7 +11,9 @@ defmodule MicaBff.Gen.Elixir do
   fields enforced, a typespec, and `to_map/1`, which returns the wire shape
   `%{"type" => ..., "props" => ...}` for any JSON library (mica uses Jason).
   Optional props that are `nil` are left out, as ADR 0001 requires; `""`, `0`,
-  `false`, `[]` and `%{}` are values and are sent. An enum prop is an atom in the
+  `false`, `[]` and `%{}` are values and are sent. A required prop that is `nil`
+  raises `ArgumentError` in `to_map/1`: clients treat every prop as optional, so only
+  the server keeps required props filled (tolerant reader). An enum prop is an atom in the
   struct and its name on the wire; a list is a list. A type
   (`Systems.BFF.Blocks.FilterOption`) is a struct whose `to_map/1` gives a plain
   JSON object, and a block's prop holds its struct.
@@ -93,12 +95,19 @@ defmodule MicaBff.Gen.Elixir do
 
       # Encodes the fields of a block or type. A field is `{name, key, type, required}`,
       # its type with each declared type resolved to its module: `{:type, module}`.
+      # Only the server enforces required props, so nil for one raises here.
       @doc false
-      def __encode__(fields, record) do
+      def __encode__(fields, %module{} = record) do
         Enum.reduce(fields, %{}, fn {name, key, type, required}, map ->
           case Map.fetch!(record, name) do
-            nil when not required -> map
-            value -> Map.put(map, key, __encode_value__(type, value))
+            nil when required ->
+              raise ArgumentError, "#{inspect(module)}: required prop #{name} is nil"
+
+            nil ->
+              map
+
+            value ->
+              Map.put(map, key, __encode_value__(type, value))
           end
         end)
       end

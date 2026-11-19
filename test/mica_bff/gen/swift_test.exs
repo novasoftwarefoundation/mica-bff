@@ -45,13 +45,20 @@ defmodule MicaBff.Gen.SwiftTest do
   # Compiles the generated file with a check program in Swift 6 mode (as next-ios)
   # and decodes payloads with JSONDecoder.
   @tag :swift
-  test "fixtures decode, and bad blocks become .unknown without failing the page", %{
-    tmp_dir: dir
-  } do
+  test "fixtures decode; a known block always decodes, also with missing or broken props; an unknown one is .unknown",
+       %{tmp_dir: dir} do
     fixture = &(Path.join("fixtures", &1) |> File.read!() |> String.trim())
+    schema = MicaBff.Spec.__schema__()
 
-    run_swift!(dir, MicaBff.Spec.__schema__(), """
+    # Tolerant reader: every block in the spec, sent with empty props, is that block.
+    empty =
+      Enum.map_join(schema.blocks, "\n", fn %{name: name} ->
+        ~s|    known("#{name}", #"{"type": "#{name}", "props": {}}"#),|
+      end)
+
+    run_swift!(dir, schema, """
     [
+    #{empty}
         check("tappable", #"#{fixture.("section_tappable.json")}"#,
               BFF.Block.section(.init(title: "Available studies", body: "Studies you can take part in right now.", to: "/pool/1/marketplace", count: nil, imageUrl: nil))),
         check("plain", #"#{fixture.("section_plain.json")}"#, BFF.Block.section(.init(title: "Studies", body: nil, to: nil, count: nil, imageUrl: nil))),
@@ -74,8 +81,8 @@ defmodule MicaBff.Gen.SwiftTest do
               BFF.Block.participation(.init(title: "Sleep and screens", subtitle: "2 days ago", statusLabel: "Awaiting", statusTone: .warning, reward: "Reward € 2,00", to: "/assignment/7"))),
         check("filter", #"#{fixture.("filter.json")}"#,
               BFF.Block.filter(.init(label: "Filter:", options: [.init(label: "All", to: "/bff/page/marketplace?query=sleep", selected: nil), .init(label: "2026", to: "/bff/page/marketplace?query=sleep&year=2026", selected: true), .init(label: "2025", to: "/bff/page/marketplace?query=sleep&year=2025", selected: false)]))),
-        check("filter option without its link", #"{"type": "filter", "props": {"options": [{"label": "A"}, {"label": "B", "to": "/b"}]}}"#,
-              BFF.Block.filter(.init(label: nil, options: [.init(label: "B", to: "/b", selected: nil)]))),
+        check("filter option without its link", #"{"type": "filter", "props": {"options": [{"label": "A"}, {"label": "B", "to": "/b"}, 3]}}"#,
+              BFF.Block.filter(.init(label: nil, options: [.init(label: "A", to: nil, selected: nil), .init(label: "B", to: "/b", selected: nil)]))),
         check("search", #"#{fixture.("search.json")}"#,
               BFF.Block.search(.init(name: "query", to: "/bff/page/marketplace?year=2026", placeholder: "Search", value: "sleep"))),
         check("unknown tone", #"{"type": "participation", "props": {"title": "A", "status_tone": "sparkly"}}"#,
@@ -88,8 +95,8 @@ defmodule MicaBff.Gen.SwiftTest do
               BFF.Block.section(.init(title: "Studies", body: nil, to: nil, count: nil, imageUrl: nil))),
         check("page", #"[{"type": "section", "props": {"title": "A"}}, {"type": "carousel", "props": {}}, {"type": "section"}, {"type": "section", "props": 1}, null, {"type": 3}]"#,
               [BFF.Block.section(.init(title: "A", body: nil, to: nil, count: nil, imageUrl: nil)), .unknown(type: "carousel"),
-              .unknown(type: "section"), .unknown(type: "section"), .unknown(type: ""),
-              .unknown(type: "")]),
+              .section(.init(title: nil, body: nil, to: nil, count: nil, imageUrl: nil)), .section(.init(title: nil, body: nil, to: nil, count: nil, imageUrl: nil)),
+              .unknown(type: ""), .unknown(type: "")]),
     ]
     """)
   end
@@ -122,7 +129,7 @@ defmodule MicaBff.Gen.SwiftTest do
         check("fraction for an optional integer", #"{"type": "row_item", "props": {"default": "x", "count": 1.5}}"#,
               BFF.Block.rowItem(.init(default: "x", subTitle: nil, count: nil, ratio: nil, active: nil))),
         check("wrong type for a required prop", #"{"type": "row_item", "props": {"default": 1}}"#,
-              BFF.Block.unknown(type: "row_item")),
+              BFF.Block.rowItem(.init(default: nil, subTitle: nil, count: nil, ratio: nil, active: nil))),
         check("block named bool", #"{"type": "bool", "props": {"x": "y"}}"#, BFF.Block.bool(.init(x: "y"))),
         check("block named decoder", #"{"type": "decoder", "props": {"x": "y"}}"#, BFF.Block.decoder(.init(x: "y"))),
     ]
@@ -157,19 +164,19 @@ defmodule MicaBff.Gen.SwiftTest do
         check("wrong type for an optional enum", #"{"type": "badge", "props": {"tone": "success", "status": 1, "counts": []}}"#,
               BFF.Block.badge(.init(tone: .success, status: nil, tags: nil, counts: []))),
         check("wrong type for a required enum", #"{"type": "badge", "props": {"tone": 1, "counts": []}}"#,
-              BFF.Block.unknown(type: "badge")),
+              BFF.Block.badge(.init(tone: nil, status: nil, tags: nil, counts: []))),
         check("elements that don't decode", #"{"type": "badge", "props": {"tone": "success", "tags": ["a", 1, null, {"b": 2}, [3], "c"], "counts": [1, "2", 1.5, 3]}}"#,
               BFF.Block.badge(.init(tone: .success, status: nil, tags: ["a", "c"], counts: [1, 3]))),
         check("wrong type for an optional list", #"{"type": "badge", "props": {"tone": "success", "tags": "a", "counts": []}}"#,
               BFF.Block.badge(.init(tone: .success, status: nil, tags: nil, counts: []))),
         check("wrong type for a required list", #"{"type": "badge", "props": {"tone": "success", "counts": {"a": 1}}}"#,
-              BFF.Block.unknown(type: "badge")),
+              BFF.Block.badge(.init(tone: .success, status: nil, tags: nil, counts: nil))),
     ]
     """)
   end
 
   @tag :swift
-  test "a type in a block decodes like a block's props: a broken required one drops the block; a type encodes",
+  test "a type in a block decodes like a block's props, also without its required fields; a type encodes",
        %{tmp_dir: dir} do
     schema = %{
       blocks: [
@@ -203,10 +210,11 @@ defmodule MicaBff.Gen.SwiftTest do
 
     run_swift!(dir, schema, """
     [
-        check("types", #"{"type": "album", "props": {"gallery": {"name": "A", "cover": {"url": "/a.png", "alt_text": "A"}, "photos": [{"url": "/b.png"}, {"alt_text": "no url"}, null], "tone": "sparkly"}, "extra": {"alt_text": "no url"}}}"#,
-              BFF.Block.album(.init(gallery: .init(name: "A", cover: .init(url: "/a.png", altText: "A"), photos: [.init(url: "/b.png", altText: nil)], tone: .calm), extra: nil))),
-        check("required type that doesn't decode", #"{"type": "album", "props": {"gallery": {"cover": {"url": "/a.png"}}}}"#,
-              BFF.Block.unknown(type: "album")),
+        check("types", #"{"type": "album", "props": {"gallery": {"name": "A", "cover": {"url": "/a.png", "alt_text": "A"}, "photos": [{"url": "/b.png"}, {"alt_text": "no url"}, null, 3], "tone": "sparkly"}, "extra": {"alt_text": "no url"}}}"#,
+              BFF.Block.album(.init(gallery: .init(name: "A", cover: .init(url: "/a.png", altText: "A"), photos: [.init(url: "/b.png", altText: nil), .init(url: nil, altText: "no url")], tone: .calm),
+                                    extra: .init(url: nil, altText: "no url")))),
+        check("a type missing its required fields", #"{"type": "album", "props": {"gallery": {"cover": {"url": "/a.png"}}}}"#,
+              BFF.Block.album(.init(gallery: .init(name: nil, cover: .init(url: "/a.png", altText: nil), photos: nil, tone: nil), extra: nil))),
         encodes("type", BFF.Gallery(name: "A", cover: .init(url: "/a.png", altText: nil), photos: [], tone: .loud),
                 #"{"cover":{"url":"/a.png"},"name":"A","photos":[],"tone":"loud"}"#),
     ]
@@ -218,6 +226,15 @@ defmodule MicaBff.Gen.SwiftTest do
 
     File.write!(Path.join(dir, "main.swift"), """
     import Foundation
+
+    func known(_ label: String, _ json: String) -> Bool {
+        guard let block = try? JSONDecoder().decode(BFF.Block.self, from: Data(json.utf8)) else {
+            print("FAIL \\(label): doesn't decode")
+            return false
+        }
+        if case .unknown = block { print("FAIL \\(label): .unknown"); return false }
+        return true
+    }
 
     func check<T: Decodable & Equatable>(_ label: String, _ json: String, _ expected: T) -> Bool {
         do {
