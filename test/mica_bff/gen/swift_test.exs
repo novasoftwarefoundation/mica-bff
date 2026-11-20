@@ -249,18 +249,18 @@ defmodule MicaBff.Gen.SwiftTest do
     [
     #{Enum.join(rules, "\n")}
         tree("home", #"#{fixture.("pages/home.json")}"#, nil,
-             #"["nba", {"markup": 0, "children": ["rewards", "approved", "pending"]}, {"markup": 1, "children": ["studies", "study-7"]}]"#),
+             #"["nba", {"region": 0, "children": ["rewards", "approved", "pending"]}, {"region": 1, "children": ["studies", "study-7"]}]"#),
         tree("home with parts", #"#{fixture.("pages/home_parts.json")}"#, nil,
-             #"[{"markup": 0, "children": ["nba", {"markup": 1, "children": ["rewards", "approved", "pending"]}]}, {"markup": 2, "children": [{"markup": 3, "children": ["studies", {"markup": 4, "children": ["study-7"]}]}]}]"#),
+             #"[{"region": 0, "children": ["nba", {"region": 1, "children": ["rewards", "approved", "pending"]}]}, {"region": 2, "children": [{"region": 3, "children": ["studies", {"region": 4, "children": ["study-7"]}]}]}]"#),
         decoded(#"#{fixture.("pages/home_parts.json")}"#).markup.map(\\.kind)
             == [.part(.init(role: .main)), .border(.init()), .part(.init(role: .related)), .border(.init()), .background(.init(color: "grey6"))],
         tree("bad markup", #"#{fixture.("pages/bad_markup.json")}"#,
-             #"markup from "approved" to "studies" crosses the markup from "rewards" to "approved""#,
-             #"[{"markup": 0, "children": ["rewards", "approved"]}, "studies"]"#),
-        // An entry of a kind the app doesn't know is left out, and an entry without a string
+             #"region from "approved" to "studies" crosses the region from "rewards" to "approved""#,
+             #"[{"region": 0, "children": ["rewards", "approved"]}, "studies"]"#),
+        // A region of a kind the app doesn't know is left out, and a region without a string
         // start and end is dropped; an id that isn't a string is none.
         tree("unknown kind", #"{"blocks": [{"id": "a", "type": "section"}, {"id": "b", "type": "section"}, {"id": 3, "type": "section"}], "markup": [{"kind": "sparkle", "start": "b", "end": "a"}, {"kind": "border", "start": "a"}, 3, {"kind": "border", "start": "a", "end": "b"}]}"#,
-             nil, #"[{"markup": 1, "children": ["a", "b"]}, null]"#),
+             nil, #"[{"region": 1, "children": ["a", "b"]}, null]"#),
         tree("no markup", #"{"blocks": [{"id": "a", "type": "section"}]}"#, nil, #"["a"]"#),
     ]
     """)
@@ -296,13 +296,13 @@ defmodule MicaBff.Gen.SwiftTest do
         try! JSONDecoder().decode(BFF.Page.self, from: Data(json.utf8))
     }
 
-    /// A tree in the fixtures' form: a block is its id, markup is its index in the page's.
-    func wire(_ nodes: [BFF.Node], _ markup: [BFF.Markup]) -> [Any] {
+    /// A tree in the fixtures' form: a block is its id, a region is its index in the page's markup.
+    func wire(_ nodes: [BFF.Node], _ markup: [BFF.Region]) -> [Any] {
         nodes.map { node -> Any in
             switch node {
             case .block(let id, _): return id ?? NSNull()
-            case .markup(let entry, let children):
-                return ["markup": markup.firstIndex(of: entry) ?? -1, "children": wire(children, markup)] as [String: Any]
+            case .region(let region, let children):
+                return ["region": markup.firstIndex(of: region) ?? -1, "children": wire(children, markup)] as [String: Any]
             }
         }
     }

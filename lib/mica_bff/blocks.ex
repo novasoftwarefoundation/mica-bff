@@ -10,12 +10,13 @@ defmodule MicaBff.Blocks do
   page) and how it is presented.
 
   A page stays a flat list, and every block on it has an `id` next to its type and
-  props. Grouping is markup beside the blocks (`MicaBff.Markup`), by those ids.
+  props. Grouping is the page's markup beside the blocks, a list of regions
+  (`MicaBff.Regions`), by those ids.
 
   `section_begin` and `section_end` are how older apps group: the blocks between
-  them, nesting, a group's look cascading as in CSS. A server that sends markup sends
-  no markers; they are removed once the minimum app version reads markup. `border`
-  and `background` markup replace them (ADR 0001, "Markup").
+  them, nesting, a group's look cascading as in CSS. A server that sends regions sends
+  no markers; they are removed once the minimum app version reads regions. `border`
+  and `background` regions replace them (ADR 0001, "Markup").
 
   A `filter` or `search` narrows down the page it is on by going to that page with
   the filter applied: the server builds the links, with the page's other query
@@ -40,7 +41,7 @@ defmodule MicaBff.Blocks do
   end
 
   # Older apps: opens a group of the blocks up to the matching section_end, replaced
-  # by `border` and `background` markup. `background` is a colour token from the
+  # by `border` and `background` regions. `background` is a colour token from the
   # design (`grey6`, `primarylight`); `border` draws a line around the group.
   defblock :section_begin do
     field(:background, :string)

@@ -91,24 +91,24 @@ defmodule MicaBff.Gen.ElixirTest do
     Enum.map(imports, fn {module, _function, _arity} -> Atom.to_string(module) end)
   end
 
-  test "every block, markup kind and type gets its module, with its keys and fields as struct keys" do
+  test "every block, region kind and type gets its module, with its keys and fields as struct keys" do
     {namespace, compiled} = compile_use(", spec: MicaBff.Spec")
-    %{blocks: blocks, markup: markup, types: types} = MicaBff.Spec.__schema__()
-    expected = [namespace | Enum.map(blocks ++ markup ++ types, &block_module(namespace, &1))]
+    %{blocks: blocks, regions: regions, types: types} = MicaBff.Spec.__schema__()
+    expected = [namespace | Enum.map(blocks ++ regions ++ types, &block_module(namespace, &1))]
 
     assert compiled |> Keyword.keys() |> Enum.sort() == Enum.sort(expected)
 
-    for {records, outer} <- [{blocks, [:id]}, {markup, [:end, :start]}, {types, []}],
+    for {records, outer} <- [{blocks, [:id]}, {regions, [:end, :start]}, {types, []}],
         record <- records do
       assert struct_keys(block_module(namespace, record)) ==
                Enum.sort(outer ++ field_names(record))
     end
   end
 
-  # The struct the server builds for a block or markup entry on the wire. An enum prop
+  # The struct the server builds for a block or region on the wire. An enum prop
   # goes in as an atom and a type as its struct, so their encoding is checked too.
   defp from_wire(ns, wire) do
-    %{blocks: blocks, markup: markup, types: types} = MicaBff.Spec.__schema__()
+    %{blocks: blocks, regions: regions, types: types} = MicaBff.Spec.__schema__()
     types = Map.new(types, &{&1.name, block_module(ns, &1)})
 
     atomize = fn map -> Map.new(map, fn {k, v} -> {String.to_existing_atom(k), v} end) end
@@ -133,7 +133,7 @@ defmodule MicaBff.Gen.ElixirTest do
         %{"kind" => kind} -> {kind, Map.take(wire, ["start", "end"])}
       end
 
-    %{fields: fields} = Enum.find(blocks ++ markup, &(to_string(&1.name) == name))
+    %{fields: fields} = Enum.find(blocks ++ regions, &(to_string(&1.name) == name))
     fields = Map.new(fields, &{to_string(&1.name), &1})
     props = Map.new(wire["props"], fn {k, v} -> {k, value.(fields[k], v)} end)
 
@@ -167,8 +167,8 @@ defmodule MicaBff.Gen.ElixirTest do
     end
   end
 
-  # A record that repeats in the data costs only the markup on it, never the page.
-  test "the view model raises on bad markup and on markup on an id two blocks have, not on the id alone" do
+  # A record that repeats in the data costs only the region on it, never the page.
+  test "the view model raises on a bad region and on a region on an id two blocks have, not on the id alone" do
     ns = namespace_for(MicaBff.Spec)
     %{"blocks" => blocks, "markup" => markup} = fixture("fixtures/pages/bad_markup.json")
     blocks = Enum.map(blocks, &from_wire(ns, &1))
@@ -176,7 +176,7 @@ defmodule MicaBff.Gen.ElixirTest do
     repeated = blocks ++ [hd(blocks)]
 
     assert_raise ArgumentError,
-                 ~r/bad view model: markup from "approved" to "studies" crosses/,
+                 ~r/bad view model: region from "approved" to "studies" crosses/,
                  fn ->
                    ns.view_model(blocks, Enum.map(markup, &from_wire(ns, &1)))
                  end
@@ -187,13 +187,13 @@ defmodule MicaBff.Gen.ElixirTest do
     assert length(sent) == 4
 
     assert_raise ArgumentError,
-                 ~r/bad view model: markup from "rewards" to "approved": two blocks have id "rewards"/,
+                 ~r/bad view model: region from "rewards" to "approved": two blocks have id "rewards"/,
                  fn ->
                    ns.view_model(repeated, [struct!(border, start: "rewards", end: "approved")])
                  end
   end
 
-  test "a block's id and an entry's start and end must be strings" do
+  test "a block's id and a region's start and end must be strings" do
     ns = namespace_for(MicaBff.Spec)
     section = Module.concat(ns, Section)
     border = Module.concat(ns, Border)
@@ -213,23 +213,23 @@ defmodule MicaBff.Gen.ElixirTest do
 
     for %{"name" => name, "ids" => ids, "markup" => markup, "check" => check, "tree" => tree} <-
           fixture("fixtures/rules/markup.json") do
-      entries = Enum.map(markup, &%{kind: &1["kind"], start: &1["start"], end: &1["end"]})
+      regions = Enum.map(markup, &%{kind: &1["kind"], start: &1["start"], end: &1["end"]})
 
-      assert ns.check(ids, entries) == if(check, do: {:error, check}, else: :ok), name
-      assert wire_tree(ns.tree(ids, entries), entries) == tree, name
+      assert ns.check(ids, regions) == if(check, do: {:error, check}, else: :ok), name
+      assert wire_tree(ns.tree(ids, regions), regions) == tree, name
     end
   end
 
-  # A tree in the fixtures' form: a block is its id, markup is its index in the list.
-  defp wire_tree(nodes, entries) do
+  # A tree in the fixtures' form: a block is its id, a region is its index in the list.
+  defp wire_tree(nodes, regions) do
     Enum.map(nodes, fn
       {:block, id} ->
         id
 
-      {:markup, entry, children} ->
+      {:region, region, children} ->
         %{
-          "markup" => Enum.find_index(entries, &(&1 == entry)),
-          "children" => wire_tree(children, entries)
+          "region" => Enum.find_index(regions, &(&1 == region)),
+          "children" => wire_tree(children, regions)
         }
     end)
   end

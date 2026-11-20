@@ -3,7 +3,7 @@ defmodule Mix.Tasks.Bff.Compat do
   @moduledoc """
       mix bff.compat [--against TAG]
 
-  Compares the spec (`MicaBff.Spec`: blocks, markup kinds and types) with the one at
+  Compares the spec (`MicaBff.Spec`: blocks, region kinds and types) with the one at
   TAG, by default the last `v*` tag, and fails on a breaking change
   (`MicaBff.Compat`). Without a `v*` tag there is nothing to compare, so it passes.
   The old spec is read by running that tag in a temporary git worktree, so the tag

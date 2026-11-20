@@ -30,16 +30,16 @@ extension <%= @namespace %> {
         }
     }
 
-    /// An entry of a page's markup: it covers the blocks from the one with id `start` to
+    /// A region of a page's markup: it covers the blocks from the one with id `start` to
     /// the one with id `end`, both included. Decoding fails without a string `start` and
-    /// `end`, so a page drops the entry; a kind this app doesn't know becomes `.unknown`.
-    struct Markup: Swift.Decodable, Swift.Equatable, Swift.Sendable {
+    /// `end`, so a page drops the region; a kind this app doesn't know becomes `.unknown`.
+    struct Region: Swift.Decodable, Swift.Equatable, Swift.Sendable {
         let start: Swift.String
         let end: Swift.String
         let kind: Kind
 
         enum Kind: Swift.Equatable, Swift.Sendable {
-<%= for kind <- @markup do %>            case <%= kind.case %>(<%= kind.type %>)
+<%= for kind <- @regions do %>            case <%= kind.case %>(<%= kind.type %>)
 <% end %>            case unknown(kind: Swift.String)
         }
 
@@ -53,7 +53,7 @@ extension <%= @namespace %> {
             end = try container.decode(Swift.String.self, forKey: .end)
             let kind = (try? container.decode(Swift.String.self, forKey: .kind)) ?? ""
             switch kind {
-<%= for kind <- @markup do %>            case "<%= kind.name %>":
+<%= for kind <- @regions do %>            case "<%= kind.name %>":
                 self.kind = .<%= kind.case %>((try? container.decode(<%= kind.type %>.self, forKey: .props))
                     ?? <%= kind.none %>)
 <% end %>            default:
@@ -68,19 +68,19 @@ extension <%= @namespace %> {
         }
     }
 
-    /// A page in the nested form a client renders: a block with its id, or markup with
+    /// A page in the nested form a client renders: a block with its id, or a region with
     /// what it covers.
     indirect enum Node: Swift.Equatable, Swift.Sendable {
         case block(id: Swift.String?, Block)
-        case markup(Markup, [Node])
+        case region(Region, [Node])
     }
 
     /// A page as the BFF sends it: its blocks, each block's id (`nil` when it has none) and
-    /// the markup beside them.
+    /// its markup: the regions beside them.
     struct Page: Swift.Decodable, Swift.Equatable, Swift.Sendable {
         let blocks: [Block]
         let ids: [Swift.String?]
-        let markup: [Markup]
+        let markup: [Region]
 
         private enum CodingKeys: Swift.String, Swift.CodingKey {
             case blocks, markup
@@ -106,25 +106,25 @@ extension <%= @namespace %> {
             let items = (try? container.decodeIfPresent([Item].self, forKey: .blocks)) ?? []
             blocks = items.map(\.block)
             ids = items.map(\.id)
-            markup = (try? container.decodeIfPresent(LossyList<Markup>.self, forKey: .markup))?.values ?? []
+            markup = (try? container.decodeIfPresent(LossyList<Region>.self, forKey: .markup))?.values ?? []
         }
 
-        init(blocks: [Block], ids: [Swift.String?], markup: [Markup]) {
+        init(blocks: [Block], ids: [Swift.String?], markup: [Region]) {
             self.blocks = blocks
             self.ids = ids
             self.markup = markup
         }
 
-        /// Why the markup doesn't hold, for the first entry that doesn't, or nil when it does:
-        /// an entry whose `start` or `end` is no block's id or an id two blocks have, one
-        /// that ends before it starts, or one that crosses an entry before it. Markup nests as
-        /// in XML: two entries share no block, or one covers all of the other. Entries of a
+        /// Why the markup doesn't hold, for the first region that doesn't, or nil when it does:
+        /// a region whose `start` or `end` is no block's id or an id two blocks have, one
+        /// that ends before it starts, or one that crosses a region before it. Regions nest as
+        /// in XML: two regions share no block, or one covers all of the other. Regions of a
         /// kind this app doesn't know are left out.
         func check() -> Swift.String? {
             let positions = idPositions()
             var kept: [Span] = []
-            for entry in known {
-                switch span(entry, positions, kept) {
+            for region in known {
+                switch span(region, positions, kept) {
                 case .success(let found): kept.append(found)
                 case .failure(let problem): return problem.reason
                 }
@@ -132,14 +132,14 @@ extension <%= @namespace %> {
             return nil
         }
 
-        /// The page as the nested tree to render, in page order. Entries over the same
-        /// stretch nest in list order, the first outermost. An entry of a kind this app
+        /// The page as the nested tree to render, in page order. Regions over the same
+        /// stretch nest in list order, the first outermost. A region of a kind this app
         /// doesn't know, or one that `check()` refuses, is left out, and its blocks still show.
         func tree() -> [Node] {
             let positions = idPositions()
             var kept: [Span] = []
-            for entry in known {
-                if case .success(let found) = span(entry, positions, kept) { kept.append(found) }
+            for region in known {
+                if case .success(let found) = span(region, positions, kept) { kept.append(found) }
             }
             // Outermost first: by start, the longest first, then in list order.
             let spans = kept.enumerated()
@@ -153,7 +153,7 @@ extension <%= @namespace %> {
                     if next < spans.count, spans[next].first == position {
                         let span = spans[next]
                         next += 1
-                        result.append(.markup(span.entry, nodes(position, span.last + 1)))
+                        result.append(.region(span.region, nodes(position, span.last + 1)))
                         position = span.last + 1
                     } else {
                         result.append(.block(id: position < ids.count ? ids[position] : nil, blocks[position]))
@@ -166,7 +166,7 @@ extension <%= @namespace %> {
         }
 
         private struct Span {
-            let entry: Markup
+            let region: Region
             let first: Swift.Int
             let last: Swift.Int
         }
@@ -175,7 +175,7 @@ extension <%= @namespace %> {
             let reason: Swift.String
         }
 
-        private var known: [Markup] {
+        private var known: [Region] {
             markup.filter { if case .unknown = $0.kind { false } else { true } }
         }
 
@@ -201,12 +201,12 @@ extension <%= @namespace %> {
             }
         }
 
-        /// The positions an entry covers, when it nests with the entries `kept` before it.
-        private func span(_ entry: Markup, _ positions: [Swift.String: Swift.Int?], _ kept: [Span]) -> Swift.Result<Span, Problem> {
-            let name = "markup from \"\(entry.start)\" to \"\(entry.end)\""
+        /// The positions a region covers, when it nests with the regions `kept` before it.
+        private func span(_ region: Region, _ positions: [Swift.String: Swift.Int?], _ kept: [Span]) -> Swift.Result<Span, Problem> {
+            let name = "region from \"\(region.start)\" to \"\(region.end)\""
             let first: Swift.Int
             let last: Swift.Int
-            switch (position(entry.start, positions), position(entry.end, positions)) {
+            switch (position(region.start, positions), position(region.end, positions)) {
             case (.failure(let problem), _), (.success, .failure(let problem)):
                 return .failure(Problem(reason: "\(name): \(problem.reason)"))
             case (.success(let start), .success(let end)):
@@ -219,9 +219,9 @@ extension <%= @namespace %> {
                     || (first < span.first && span.first <= last && last < span.last)
             }
             if let crossed {
-                return .failure(Problem(reason: "\(name) crosses the markup from \"\(crossed.entry.start)\" to \"\(crossed.entry.end)\""))
+                return .failure(Problem(reason: "\(name) crosses the region from \"\(crossed.region.start)\" to \"\(crossed.region.end)\""))
             }
-            return .success(Span(entry: entry, first: first, last: last))
+            return .success(Span(region: region, first: first, last: last))
         }
     }
 <%= for source <- @structs do %>

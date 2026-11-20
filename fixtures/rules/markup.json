@@ -17,101 +17,101 @@
     ],
     "check": null,
     "tree": [
-      {"markup": 0, "children": ["nba", {"markup": 1, "children": ["rewards", "pending"]}]},
-      {"markup": 2, "children": [{"markup": 3, "children": ["studies", "study-7"]}]}
+      {"region": 0, "children": ["nba", {"region": 1, "children": ["rewards", "pending"]}]},
+      {"region": 2, "children": [{"region": 3, "children": ["studies", "study-7"]}]}
     ]
   },
   {
-    "name": "entries over the same stretch nest in list order, the first outermost",
+    "name": "regions over the same stretch nest in list order, the first outermost",
     "ids": ["a", "b"],
     "markup": [
       {"kind": "background", "start": "a", "end": "b"},
       {"kind": "border", "start": "a", "end": "b"}
     ],
     "check": null,
-    "tree": [{"markup": 0, "children": [{"markup": 1, "children": ["a", "b"]}]}]
+    "tree": [{"region": 0, "children": [{"region": 1, "children": ["a", "b"]}]}]
   },
   {
-    "name": "an inner entry listed before its outer one still nests inside it",
+    "name": "an inner region listed before its outer one still nests inside it",
     "ids": ["a", "b", "c"],
     "markup": [
       {"kind": "border", "start": "b", "end": "b"},
       {"kind": "part", "start": "a", "end": "c"}
     ],
     "check": null,
-    "tree": [{"markup": 1, "children": ["a", {"markup": 0, "children": ["b"]}, "c"]}]
+    "tree": [{"region": 1, "children": ["a", {"region": 0, "children": ["b"]}, "c"]}]
   },
   {
     "name": "a block without an id shows, and can't be a boundary",
     "ids": ["a", null, "b"],
     "markup": [{"kind": "border", "start": "a", "end": "b"}],
     "check": null,
-    "tree": [{"markup": 0, "children": ["a", null, "b"]}]
+    "tree": [{"region": 0, "children": ["a", null, "b"]}]
   },
   {
-    "name": "crossing entries: the later one is left out",
+    "name": "crossing regions: the later one is left out",
     "ids": ["a", "b", "c"],
     "markup": [
       {"kind": "border", "start": "a", "end": "b"},
       {"kind": "background", "start": "b", "end": "c"}
     ],
-    "check": "markup from \"b\" to \"c\" crosses the markup from \"a\" to \"b\"",
-    "tree": [{"markup": 0, "children": ["a", "b"]}, "c"]
+    "check": "region from \"b\" to \"c\" crosses the region from \"a\" to \"b\"",
+    "tree": [{"region": 0, "children": ["a", "b"]}, "c"]
   },
   {
-    "name": "an entry that crosses several: the first in list order is named",
+    "name": "a region that crosses several: the first in list order is named",
     "ids": ["a", "b", "c", "d"],
     "markup": [
       {"kind": "part", "start": "a", "end": "c"},
       {"kind": "border", "start": "b", "end": "c"},
       {"kind": "background", "start": "c", "end": "d"}
     ],
-    "check": "markup from \"c\" to \"d\" crosses the markup from \"a\" to \"c\"",
-    "tree": [{"markup": 0, "children": ["a", {"markup": 1, "children": ["b", "c"]}]}, "d"]
+    "check": "region from \"c\" to \"d\" crosses the region from \"a\" to \"c\"",
+    "tree": [{"region": 0, "children": ["a", {"region": 1, "children": ["b", "c"]}]}, "d"]
   },
   {
     "name": "a start that is no block's id",
     "ids": ["a", "b"],
     "markup": [{"kind": "border", "start": "x", "end": "b"}],
-    "check": "markup from \"x\" to \"b\": \"x\" is no block's id",
+    "check": "region from \"x\" to \"b\": \"x\" is no block's id",
     "tree": ["a", "b"]
   },
   {
     "name": "an end that is no block's id",
     "ids": ["a", "b"],
     "markup": [{"kind": "border", "start": "a", "end": "x"}],
-    "check": "markup from \"a\" to \"x\": \"x\" is no block's id",
+    "check": "region from \"a\" to \"x\": \"x\" is no block's id",
     "tree": ["a", "b"]
   },
   {
-    "name": "an entry that ends before it starts",
+    "name": "a region that ends before it starts",
     "ids": ["a", "b"],
     "markup": [{"kind": "border", "start": "b", "end": "a"}],
-    "check": "markup from \"b\" to \"a\": it ends before it starts",
+    "check": "region from \"b\" to \"a\": it ends before it starts",
     "tree": ["a", "b"]
   },
   {
-    "name": "two blocks with one id: an entry on that id is left out, the others stay",
+    "name": "two blocks with one id: a region on that id is left out, the others stay",
     "ids": ["a", "b", "a", "c"],
     "markup": [
       {"kind": "border", "start": "a", "end": "b"},
       {"kind": "background", "start": "c", "end": "c"}
     ],
-    "check": "markup from \"a\" to \"b\": two blocks have id \"a\"",
-    "tree": ["a", "b", "a", {"markup": 1, "children": ["c"]}]
+    "check": "region from \"a\" to \"b\": two blocks have id \"a\"",
+    "tree": ["a", "b", "a", {"region": 1, "children": ["c"]}]
   },
   {
-    "name": "two blocks with one id that no markup names hold",
+    "name": "two blocks with one id that no region names hold",
     "ids": ["a", "a", "b"],
     "markup": [{"kind": "border", "start": "b", "end": "b"}],
     "check": null,
-    "tree": ["a", "a", {"markup": 0, "children": ["b"]}]
+    "tree": ["a", "a", {"region": 0, "children": ["b"]}]
   },
   {
     "name": "an id with a quote or a backslash is written as it is",
     "ids": ["a\"b", "c\\d"],
     "markup": [{"kind": "border", "start": "c\\d", "end": "a\"b"}],
-    "check": "markup from \"c\\d\" to \"a\"b\": it ends before it starts",
+    "check": "region from \"c\\d\" to \"a\"b\": it ends before it starts",
     "tree": ["a\"b", "c\\d"]
   }
 ]

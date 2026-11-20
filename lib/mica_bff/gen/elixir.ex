@@ -1,6 +1,6 @@
 defmodule MicaBff.Gen.Elixir do
   @moduledoc """
-  Defines one Elixir module per block, markup kind and type at compile time, under
+  Defines one Elixir module per block, region kind and type at compile time, under
   the module that uses it, the way `Prism.Generator.Phoenix` defines components:
 
       defmodule Systems.BFF.Blocks do
@@ -11,7 +11,7 @@ defmodule MicaBff.Gen.Elixir do
   fields enforced, a typespec, and `to_map/1`, which returns the wire shape
   `%{"id" => ..., "type" => ..., "props" => ...}` for any JSON library (mica uses
   Jason). Every block has an `id`, a string the page picks that stays the same while
-  it shows the same thing; `to_map/1` raises when it isn't a string. A markup kind
+  it shows the same thing; `to_map/1` raises when it isn't a string. A region kind
   (`Systems.BFF.Blocks.Border`) is a struct with `start` and `end`, the ids of the
   first and last block it covers, and `to_map/1` gives
   `%{"kind" => ..., "start" => ..., "end" => ..., "props" => ...}`.
@@ -28,8 +28,9 @@ defmodule MicaBff.Gen.Elixir do
   The module that uses it gets `pages/0`, the spec's pages with their params
   (`[%{name: :home, path: "/bff/page/home", params: []}]`), `page_params/2`,
   which reads a page's params from the request's query parameters, and the rules of
-  markup: `view_model/2`, the page on the wire, which raises on bad markup;
-  `check/2`, why markup is bad; and `tree/2`, the nested tree a client renders. The
+  a page's markup, its list of regions: `view_model/2`, the page on the wire, which
+  raises on a bad region; `check/2`, why a region is bad; and `tree/2`, the nested
+  tree a client renders. The
   defined modules call nothing in mica-bff, so an app can depend on it with
   `runtime: false`.
   """
@@ -54,8 +55,8 @@ defmodule MicaBff.Gen.Elixir do
       Enum.map(types, &record(&1, "Type", namespace, type_modules, :type)) ++
         Enum.map(schema.blocks, &record(&1, "Block", namespace, type_modules, :block)) ++
         Enum.map(
-          Map.get(schema, :markup, []),
-          &record(&1, "Markup", namespace, type_modules, :markup)
+          Map.get(schema, :regions, []),
+          &record(&1, "Region", namespace, type_modules, :region)
         )
 
     # A compile-time dependency: this module recompiles when the spec changes.
@@ -144,7 +145,7 @@ defmodule MicaBff.Gen.Elixir do
 
       defp __encode_value__(_primitive, value), do: value
 
-      # The keys a block (`id`) or markup entry (`start`, `end`) has next to its props:
+      # The keys a block (`id`) or region (`start`, `end`) has next to its props:
       # always a string, as clients read them.
       @doc false
       def __keys__(keys, %module{} = record) do
@@ -162,8 +163,8 @@ defmodule MicaBff.Gen.Elixir do
 
       @doc """
       The page as it goes on the wire, `%{"blocks" => [...], "markup" => [...]}`: the
-      blocks in page order and the markup beside them. Raises `ArgumentError` when the
-      markup is bad (`check/2`): the server never sends bad markup.
+      blocks in page order and the regions beside them. Raises `ArgumentError` when a
+      region is bad (`check/2`): the server never sends a bad region.
       """
       @spec view_model([struct], [struct]) :: %{String.t() => [map]}
       def view_model(blocks, markup \\ []) do
@@ -184,20 +185,20 @@ defmodule MicaBff.Gen.Elixir do
       defp __to_map__(%module{} = record), do: module.to_map(record)
 
       @doc """
-      `:ok` when `markup` holds for the blocks with `ids`, in page order, or
-      `{:error, reason}` for the first entry that doesn't: one whose `start` or `end`
-      is no block's id or an id two blocks have, one that ends before it starts, or one
-      that crosses an entry before it. Markup nests as in XML: two entries share no
-      block, or one covers all of the other. Two blocks with one id are fine as long as
-      no markup names that id.
+      `:ok` when the regions in `markup` hold for the blocks with `ids`, in page order,
+      or `{:error, reason}` for the first region that doesn't: one whose `start` or
+      `end` is no block's id or an id two blocks have, one that ends before it starts,
+      or one that crosses a region before it. Regions nest as in XML: two regions share
+      no block, or one covers all of the other. Two blocks with one id are fine as long
+      as no region names that id.
       """
       @spec check([String.t() | nil], [map]) :: :ok | {:error, String.t()}
       def check(ids, markup) do
         positions = __positions__(ids)
 
         markup
-        |> Enum.reduce_while([], fn entry, kept ->
-          case __span__(positions, kept, entry) do
+        |> Enum.reduce_while([], fn region, kept ->
+          case __span__(positions, kept, region) do
             {:ok, span} -> {:cont, [span | kept]}
             error -> {:halt, error}
           end
@@ -210,17 +211,18 @@ defmodule MicaBff.Gen.Elixir do
 
       @doc """
       The nested tree a client renders for the blocks with `ids`, in page order, and
-      their `markup`: `{:block, id}` and `{:markup, entry, children}`. Entries over the
-      same stretch nest in list order, the first outermost. Like a client, it leaves out
-      an entry that `check/2` refuses, and the blocks it covers still show.
+      the regions in their `markup`: `{:block, id}` and `{:region, region, children}`.
+      Regions over the same stretch nest in list order, the first outermost. Like a
+      client, it leaves out a region that `check/2` refuses, and the blocks it covers
+      still show.
       """
-      @spec tree([String.t() | nil], [map]) :: [{:block, String.t() | nil} | {:markup, map, list}]
+      @spec tree([String.t() | nil], [map]) :: [{:block, String.t() | nil} | {:region, map, list}]
       def tree(ids, markup) do
         positions = __positions__(ids)
 
         kept =
-          Enum.reduce(markup, [], fn entry, kept ->
-            case __span__(positions, kept, entry) do
+          Enum.reduce(markup, [], fn region, kept ->
+            case __span__(positions, kept, region) do
               {:ok, span} -> [span | kept]
               {:error, _reason} -> kept
             end
@@ -228,21 +230,21 @@ defmodule MicaBff.Gen.Elixir do
 
         # Outermost first: by start, the longest first, then in list order (a stable sort).
         spans =
-          kept |> Enum.reverse() |> Enum.sort_by(fn {_entry, first, last} -> {first, -last} end)
+          kept |> Enum.reverse() |> Enum.sort_by(fn {_region, first, last} -> {first, -last} end)
 
         __tree__(ids, 0, spans)
       end
 
       defp __tree__([], _position, _spans), do: []
 
-      defp __tree__(ids, position, [{entry, position, last} | spans]) do
+      defp __tree__(ids, position, [{region, position, last} | spans]) do
         {inside, outside} =
-          Enum.split_while(spans, fn {_entry, first, _last} -> first <= last end)
+          Enum.split_while(spans, fn {_region, first, _last} -> first <= last end)
 
         {covered, rest} = Enum.split(ids, last - position + 1)
 
         [
-          {:markup, entry, __tree__(covered, position, inside)}
+          {:region, region, __tree__(covered, position, inside)}
           | __tree__(rest, last + 1, outside)
         ]
       end
@@ -272,27 +274,27 @@ defmodule MicaBff.Gen.Elixir do
         end
       end
 
-      # The positions an entry covers, when it nests with the entries `kept` before it.
+      # The positions a region covers, when it nests with the regions `kept` before it.
       # Ids are quoted as they are, as every client writes them.
-      defp __span__(positions, kept, %{start: start, end: stop} = entry) do
-        name = ~s(markup from "#{start}" to "#{stop}")
+      defp __span__(positions, kept, %{start: start, end: stop} = region) do
+        name = ~s(region from "#{start}" to "#{stop}")
 
         with {:ok, first} <- __position__(positions, start),
              {:ok, last} <- __position__(positions, stop),
              :ok <- if(last < first, do: {:error, "it ends before it starts"}, else: :ok),
-             # The first crossed entry in list order, as every client reports it.
+             # The first crossed region in list order, as every client reports it.
              nil <- kept |> Enum.reverse() |> Enum.find(&__crosses__(&1, first, last)) do
-          {:ok, {entry, first, last}}
+          {:ok, {region, first, last}}
         else
           {:error, reason} ->
             {:error, "#{name}: #{reason}"}
 
           {%{start: crossed_start, end: crossed_stop}, _first, _last} ->
-            {:error, ~s(#{name} crosses the markup from "#{crossed_start}" to "#{crossed_stop}")}
+            {:error, ~s(#{name} crosses the region from "#{crossed_start}" to "#{crossed_stop}")}
         end
       end
 
-      defp __crosses__({_entry, a, b}, first, last),
+      defp __crosses__({_region, a, b}, first, last),
         do: (a < first and first <= b and b < last) or (first < a and a <= last and last < b)
 
       unquote_splicing(records)
@@ -344,14 +346,14 @@ defmodule MicaBff.Gen.Elixir do
 
   defp module(namespace, name), do: Module.concat(namespace, Macro.camelize(to_string(name)))
 
-  # A block, markup kind or type: a struct and its `to_map/1`. Only the spec's fields
+  # A block, region kind or type: a struct and its `to_map/1`. Only the spec's fields
   # are encoded: a key put on the struct by hand is never sent.
   defp record(%{name: name, fields: fields}, kind, namespace, type_modules, shape) do
-    # The keys next to the props, and the key that names the block or markup kind.
+    # The keys next to the props, and the key that names the block or region kind.
     {outer, named} =
       case shape do
         :block -> {[:id], "type"}
-        :markup -> {[:start, :end], "kind"}
+        :region -> {[:start, :end], "kind"}
         :type -> {[], nil}
       end
 
