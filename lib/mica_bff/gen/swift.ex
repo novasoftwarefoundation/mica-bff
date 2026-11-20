@@ -25,7 +25,8 @@ defmodule MicaBff.Gen.Swift do
     decoded like a block, plus `.unknown(kind:)`. A region without a string `start`
     and `end` is dropped. `Page.tree()` is the nested tree to render (`Node`): it
     leaves out a region of a kind the app doesn't know and one that `Page.check()`
-    refuses, and still shows their blocks.
+    refuses, also one that would nest regions deeper than `Page.maxRegionDepth`, and
+    still shows their blocks.
   - snake_case wire names map to camelCase; Swift keywords are escaped. Standard
     names are written as `Swift.String` etc., so a block named `bool` or
     `decoder` can't shadow them inside the namespace.
@@ -120,7 +121,8 @@ defmodule MicaBff.Gen.Swift do
       blocks: blocks,
       regions: regions,
       structs: Enum.map(records, &indent(&1.source, 4)),
-      decoders: Enum.filter(records, &(&1.fields != []))
+      decoders: Enum.filter(records, &(&1.fields != [])),
+      max_region_depth: MicaBff.Gen.max_region_depth()
     ]
     |> template()
     |> String.trim_trailing()

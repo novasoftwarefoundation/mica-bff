@@ -188,9 +188,10 @@ defmodule MicaBff.Gen.Elixir do
       `:ok` when the regions in `markup` hold for the blocks with `ids`, in page order,
       or `{:error, reason}` for the first region that doesn't: one whose `start` or
       `end` is no block's id or an id two blocks have, one that ends before it starts,
-      or one that crosses a region before it. Regions nest as in XML: two regions share
-      no block, or one covers all of the other. Two blocks with one id are fine as long
-      as no region names that id.
+      one that crosses a region before it, or one that would make regions nest deeper
+      than #{unquote(MicaBff.Gen.max_region_depth())}. Regions nest as in XML: two regions
+      share no block, or one covers all of the other. Two blocks with one id are fine as
+      long as no region names that id.
       """
       @spec check([String.t() | nil], [map]) :: :ok | {:error, String.t()}
       def check(ids, markup) do
@@ -198,8 +199,8 @@ defmodule MicaBff.Gen.Elixir do
 
         markup
         |> Enum.reduce_while([], fn region, kept ->
-          case __span__(positions, kept, region) do
-            {:ok, span} -> {:cont, [span | kept]}
+          case __keep__(positions, kept, region) do
+            {:ok, kept} -> {:cont, kept}
             error -> {:halt, error}
           end
         end)
@@ -222,15 +223,18 @@ defmodule MicaBff.Gen.Elixir do
 
         kept =
           Enum.reduce(markup, [], fn region, kept ->
-            case __span__(positions, kept, region) do
-              {:ok, span} -> [span | kept]
+            case __keep__(positions, kept, region) do
+              {:ok, kept} -> kept
               {:error, _reason} -> kept
             end
           end)
 
         # Outermost first: by start, the longest first, then in list order (a stable sort).
         spans =
-          kept |> Enum.reverse() |> Enum.sort_by(fn {_region, first, last} -> {first, -last} end)
+          kept
+          |> Enum.reverse()
+          |> Enum.map(fn {region, first, last, _depth} -> {region, first, last} end)
+          |> Enum.sort_by(fn {_region, first, last} -> {first, -last} end)
 
         __tree__(ids, 0, spans)
       end
@@ -274,9 +278,38 @@ defmodule MicaBff.Gen.Elixir do
         end
       end
 
+      # `kept` with `region` added, newest first, when it nests with them and keeps every
+      # region within the depth limit; or why not. A kept region is
+      # `{region, first, last, depth}`. The regions around the new one set its depth; the
+      # ones it goes around get one deeper (one over the same stretch before it is around it).
+      defp __keep__(positions, kept, %{start: start, end: stop} = region) do
+        with {:ok, first, last} <- __span__(positions, kept, region) do
+          inside? = fn {_region, a, b, _depth} ->
+            first <= a and b <= last and {a, b} != {first, last}
+          end
+
+          around = Enum.count(kept, fn {_region, a, b, _depth} -> a <= first and last <= b end)
+
+          deepest =
+            Enum.max([around + 1 | for({_r, _a, _b, d} = k <- kept, inside?.(k), do: d + 1)])
+
+          if deepest > unquote(MicaBff.Gen.max_region_depth()) do
+            {:error,
+             ~s(region from "#{start}" to "#{stop}": regions would nest #{deepest} deep, more than #{unquote(MicaBff.Gen.max_region_depth())})}
+          else
+            deeper =
+              Enum.map(kept, fn {r, a, b, d} = k ->
+                if inside?.(k), do: {r, a, b, d + 1}, else: k
+              end)
+
+            {:ok, [{region, first, last, around + 1} | deeper]}
+          end
+        end
+      end
+
       # The positions a region covers, when it nests with the regions `kept` before it.
       # Ids are quoted as they are, as every client writes them.
-      defp __span__(positions, kept, %{start: start, end: stop} = region) do
+      defp __span__(positions, kept, %{start: start, end: stop}) do
         name = ~s(region from "#{start}" to "#{stop}")
 
         with {:ok, first} <- __position__(positions, start),
@@ -284,17 +317,17 @@ defmodule MicaBff.Gen.Elixir do
              :ok <- if(last < first, do: {:error, "it ends before it starts"}, else: :ok),
              # The first crossed region in list order, as every client reports it.
              nil <- kept |> Enum.reverse() |> Enum.find(&__crosses__(&1, first, last)) do
-          {:ok, {region, first, last}}
+          {:ok, first, last}
         else
           {:error, reason} ->
             {:error, "#{name}: #{reason}"}
 
-          {%{start: crossed_start, end: crossed_stop}, _first, _last} ->
+          {%{start: crossed_start, end: crossed_stop}, _first, _last, _depth} ->
             {:error, ~s(#{name} crosses the region from "#{crossed_start}" to "#{crossed_stop}")}
         end
       end
 
-      defp __crosses__({_region, a, b}, first, last),
+      defp __crosses__({_region, a, b, _depth}, first, last),
         do: (a < first and first <= b and b < last) or (first < a and a <= last and last < b)
 
       unquote_splicing(records)

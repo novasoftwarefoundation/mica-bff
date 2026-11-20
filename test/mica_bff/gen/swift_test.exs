@@ -229,7 +229,7 @@ defmodule MicaBff.Gen.SwiftTest do
     fixture = &(Path.join("fixtures", &1) |> File.read!() |> String.trim())
 
     rules =
-      for %{"name" => name, "ids" => ids, "markup" => markup, "check" => check, "tree" => tree} <-
+      for %{"name" => name, "ids" => ids, "markup" => markup, "check" => check} = rule <-
             "rules/markup.json" |> fixture.() |> JSON.decode!() do
         blocks =
           for id <- ids,
@@ -242,7 +242,13 @@ defmodule MicaBff.Gen.SwiftTest do
         page = %{"blocks" => blocks, "markup" => Enum.map(markup, &Map.put(&1, "props", %{}))}
         check = if check, do: ~s(#"#{check}"#), else: "nil"
 
-        ~s|    tree(#"#{name}"#, #"#{JSON.encode!(page)}"#, #{check}, #"#{JSON.encode!(tree)}"#),|
+        case rule do
+          %{"tree" => tree} ->
+            ~s|    tree(#"#{name}"#, #"#{JSON.encode!(page)}"#, #{check}, #"#{JSON.encode!(tree)}"#),|
+
+          %{"depth" => depth} ->
+            ~s|    deep(#"#{name}"#, #"#{JSON.encode!(page)}"#, #{check}, #{depth}, #{length(ids)}),|
+        end
       end
 
     run_swift!(dir, MicaBff.Spec.__schema__(), """
@@ -262,6 +268,11 @@ defmodule MicaBff.Gen.SwiftTest do
         tree("unknown kind", #"{"blocks": [{"id": "a", "type": "section"}, {"id": "b", "type": "section"}, {"id": 3, "type": "section"}], "markup": [{"kind": "sparkle", "start": "b", "end": "a"}, {"kind": "border", "start": "a"}, 3, {"kind": "border", "start": "a", "end": "b"}]}"#,
              nil, #"[{"region": 1, "children": ["a", "b"]}, null]"#),
         tree("no markup", #"{"blocks": [{"id": "a", "type": "section"}]}"#, nil, #"["a"]"#),
+        // Without the limit, the 100,000th region would be 100,000 deep, which overflows the stack.
+        deep("100,000 regions over the same blocks",
+             BFF.Page(blocks: [.unknown(type: "a"), .unknown(type: "b")], ids: ["a", "b"],
+                      markup: (0..<100_000).map { _ in BFF.Region(start: "a", end: "b", kind: .border(.init())) }),
+             "region from \\"a\\" to \\"b\\": regions would nest 33 deep, more than 32", 32, 2),
     ]
     """)
   end
@@ -317,6 +328,34 @@ defmodule MicaBff.Gen.SwiftTest do
         if page.check() == check, (got as NSArray).isEqual(to: expected) { return true }
         print("FAIL \\(label): check \\(page.check() ?? "nil"), tree \\(got)")
         return false
+    }
+
+    func depth(_ nodes: [BFF.Node]) -> Int {
+        nodes.map { node -> Int in
+            if case let .region(_, children) = node { 1 + depth(children) } else { 0 }
+        }.max() ?? 0
+    }
+
+    func count(_ nodes: [BFF.Node]) -> Int {
+        nodes.map { node -> Int in
+            if case let .region(_, children) = node { count(children) } else { 1 }
+        }.reduce(0, +)
+    }
+
+    /// A page too deep to write its tree out: its check, the tree's depth and how many blocks show.
+    func deep(_ label: String, _ page: BFF.Page, _ check: String?, _ expectedDepth: Int, _ blocks: Int) -> Bool {
+        let tree = page.tree()
+        if page.check() == check, depth(tree) == expectedDepth, count(tree) == blocks { return true }
+        print("FAIL \\(label): check \\(page.check() ?? "nil"), depth \\(depth(tree)), blocks \\(count(tree))")
+        return false
+    }
+
+    func deep(_ label: String, _ json: String, _ check: String?, _ expectedDepth: Int, _ blocks: Int) -> Bool {
+        guard let page = try? JSONDecoder().decode(BFF.Page.self, from: Data(json.utf8)) else {
+            print("FAIL \\(label): doesn't decode")
+            return false
+        }
+        return deep(label, page, check, expectedDepth, blocks)
     }
 
     func encodes<T: Encodable>(_ label: String, _ value: T, _ json: String) -> Bool {
