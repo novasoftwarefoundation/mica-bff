@@ -45,7 +45,7 @@ end
 
 A spec change arrives by bumping `ref` and running `mix deps.get`. A removed block or field in a struct literal then fails compilation; a call or field access on it only warns (an error under `--warnings-as-errors`, as in mono), and `struct!/2` or a dynamic call fails at runtime.
 
-`to_map/1` and `view_model/2` raise on a server bug instead of sending it: a required prop that is `nil`, a list prop that isn't a list or holds `nil`, and markup that doesn't nest. That fails the whole page (mono answers 500), so a bug shows in dev, tests and the logs instead of as a block or element the app quietly drops.
+`to_map/1` and `view_model/2` raise on a server bug instead of sending it: a block id, `start` or `end` that isn't a string, a required prop that is `nil`, a list prop that isn't a list or holds `nil`, and markup that `check/2` refuses. That fails the whole page (mono answers 500), so a bug shows in dev, tests and the logs instead of as a block or element the app quietly drops.
 
 ## Generated code
 

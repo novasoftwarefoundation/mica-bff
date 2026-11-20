@@ -125,13 +125,10 @@ defmodule MicaBff.Gen.Elixir do
               raise ArgumentError,
                     "#{inspect(module)}: list prop #{name} is not a list: #{inspect(value)}"
 
-            {value, {:list, _element}} ->
-              if nil in value,
+            {value, type} ->
+              if match?({:list, _element}, type) and nil in value,
                 do: raise(ArgumentError, "#{inspect(module)}: list prop #{name} holds nil")
 
-              Map.put(map, key, __encode_value__(type, value))
-
-            {value, type} ->
               Map.put(map, key, __encode_value__(type, value))
           end
         end)

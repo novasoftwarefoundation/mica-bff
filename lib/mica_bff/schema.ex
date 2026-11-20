@@ -51,14 +51,16 @@ defmodule MicaBff.Schema do
   `defmarkup`, a field named after a key every block (`id`) or markup entry
   (`start`, `end`) has, a
   `param` outside a `defpage` or of a type that isn't a primitive, a declaration
-  inside another, and a malformed or out-of-order version. Generators read
-  `__schema__/0`, never the source.
+  inside another, and a malformed or out-of-order version. A declaration in the
+  wrong part of the spec (a `deftype` in blocks.ex) fails when `MicaBff.Spec`
+  composes the parts (`only!/2`), naming the part and the declaration to move.
+  Generators read `__schema__/0`, never the source.
   """
 
   @primitives [:string, :integer, :float, :boolean]
 
   defmacro __using__(opts) do
-    case Keyword.validate(opts, [:types]) do
+    case Keyword.keyword?(opts) && Keyword.validate(opts, [:types]) do
       {:ok, _opts} ->
         :ok
 
@@ -68,6 +70,9 @@ defmodule MicaBff.Schema do
           __CALLER__.line,
           "use MicaBff.Schema has unknown option(s) #{inspect(unknown)}; allowed: [:types]"
         )
+
+      false ->
+        __fail__(__CALLER__.file, __CALLER__.line, "use MicaBff.Schema takes types: Module")
     end
 
     types = Keyword.get(opts, :types)
@@ -378,7 +383,8 @@ defmodule MicaBff.Schema do
         blocks: [],
         types: external ++ before,
         all_types: all,
-        rule: "; a type holds a primitive, an enum or a type declared before it, never a block"
+        rule:
+          "; a type holds a primitive, an enum, a type declared before it or a list of one, never a block"
       }
 
       validate_fields!(inspect(name), fields, allowed, file)
@@ -457,7 +463,9 @@ defmodule MicaBff.Schema do
         fail.("#{at} holds type #{inspect(element)}, which isn't declared before it")
 
       match?({:list, _}, type) ->
-        fail.("#{at}: a list holds one primitive or declared type, got #{inspect(element)}")
+        fail.(
+          "#{at}: a list holds one primitive or declared type, got #{inspect(element)}#{allowed.rule}"
+        )
 
       true ->
         fail.("#{at} has unknown type #{inspect(type)}#{allowed.rule}")
