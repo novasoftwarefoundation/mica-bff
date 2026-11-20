@@ -16,9 +16,11 @@ defmodule MicaBff.Gen.Elixir do
   first and last block it covers, and `to_map/1` gives
   `%{"kind" => ..., "start" => ..., "end" => ..., "props" => ...}`.
   Optional props that are `nil` are left out, as ADR 0001 requires; `""`, `0`,
-  `false`, `[]` and `%{}` are values and are sent. A required prop that is `nil`
-  raises `ArgumentError` in `to_map/1`: clients treat every prop as optional, so only
-  the server keeps required props filled (tolerant reader). An enum prop is an atom in the
+  `false`, `[]` and `%{}` are values and are sent. A required prop that is `nil`,
+  a list prop that isn't a list and a list with `nil` in it raise `ArgumentError` in
+  `to_map/1`: clients treat every prop as optional, so only the server keeps props
+  right (tolerant reader), and a server bug fails its page instead of reaching the
+  app as a missing prop. An enum prop is an atom in the
   struct and its name on the wire; a list is a list. A type
   (`Systems.BFF.Blocks.FilterOption`) is a struct whose `to_map/1` gives a plain
   JSON object, and a block's prop holds its struct.
@@ -107,24 +109,30 @@ defmodule MicaBff.Gen.Elixir do
 
       # Encodes the fields of a block or type. A field is `{name, key, type, required}`,
       # its type with each declared type resolved to its module: `{:type, module}`.
-      # Only the server enforces required props, so nil for one raises here.
+      # Only the server keeps props right, so a nil required prop, a list prop that
+      # isn't a list and a nil in a list raise here.
       @doc false
       def __encode__(fields, %module{} = record) do
         Enum.reduce(fields, %{}, fn {name, key, type, required}, map ->
-          case Map.fetch!(record, name) do
-            nil when required ->
+          case {Map.fetch!(record, name), type} do
+            {nil, _type} when required ->
               raise ArgumentError, "#{inspect(module)}: required prop #{name} is nil"
 
-            nil ->
+            {nil, _type} ->
               map
 
-            value ->
+            {value, {:list, _element}} when not is_list(value) ->
+              raise ArgumentError,
+                    "#{inspect(module)}: list prop #{name} is not a list: #{inspect(value)}"
+
+            {value, type} ->
+              if match?({:list, _element}, type) and nil in value,
+                do: raise(ArgumentError, "#{inspect(module)}: list prop #{name} holds nil")
+
               Map.put(map, key, __encode_value__(type, value))
           end
         end)
       end
-
-      defp __encode_value__(_type, nil), do: nil
 
       defp __encode_value__({:enum, _values}, value) when is_atom(value),
         do: Atom.to_string(value)

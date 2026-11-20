@@ -51,13 +51,30 @@ defmodule MicaBff.Schema do
   `defmarkup`, a field named after a key every block (`id`) or markup entry
   (`start`, `end`) has, a
   `param` outside a `defpage` or of a type that isn't a primitive, a declaration
-  inside another, and a malformed or out-of-order version. Generators read
-  `__schema__/0`, never the source.
+  inside another, and a malformed or out-of-order version. A declaration in the
+  wrong part of the spec (a `deftype` in blocks.ex) fails when `MicaBff.Spec`
+  composes the parts (`only!/2`), naming the part and the declaration to move.
+  Generators read `__schema__/0`, never the source.
   """
 
   @primitives [:string, :integer, :float, :boolean]
 
   defmacro __using__(opts) do
+    case Keyword.keyword?(opts) && Keyword.validate(opts, [:types]) do
+      {:ok, _opts} ->
+        :ok
+
+      {:error, unknown} ->
+        __fail__(
+          __CALLER__.file,
+          __CALLER__.line,
+          "use MicaBff.Schema has unknown option(s) #{inspect(unknown)}; allowed: [:types]"
+        )
+
+      false ->
+        __fail__(__CALLER__.file, __CALLER__.line, "use MicaBff.Schema takes types: Module")
+    end
+
     types = Keyword.get(opts, :types)
 
     quote do
@@ -232,6 +249,24 @@ defmodule MicaBff.Schema do
   def __fail__(file, line, description),
     do: raise(CompileError, file: file, line: line, description: description)
 
+  @doc """
+  The declarations of `kind` (`:blocks`, `:markup`, `:pages` or `:types`) in
+  `module`, a part of the spec that holds only that kind. Fails at compile time,
+  naming what to move, when it declares anything else: a `deftype` in blocks.ex.
+  """
+  def only!(module, kind) do
+    schema = module.__schema__()
+
+    for {other, [%{name: name} | _]} <- Map.delete(schema, kind) do
+      raise CompileError,
+        description:
+          "#{inspect(module)} holds only #{kind}, but declares #{inspect(name)} in #{other}; " <>
+            "move it to the module of its kind"
+    end
+
+    Map.fetch!(schema, kind)
+  end
+
   @doc false
   def __top_level__!(module, file, line, what) do
     case Module.get_attribute(module, :mica_bff_open) do
@@ -310,7 +345,7 @@ defmodule MicaBff.Schema do
     block_names = Enum.map(blocks, & &1.name)
     # A block may hold any type: no type holds a block, so there is no cycle.
     types = external ++ Enum.map(types, & &1.name)
-    allowed = %{blocks: block_names, types: types, all_types: types}
+    allowed = %{blocks: block_names, types: types, all_types: types, rule: ""}
 
     Enum.reduce(records, seen, fn %{name: name, fields: fields} = record, seen ->
       fail = &__fail__(file, record.line, &1)
@@ -342,7 +377,16 @@ defmodule MicaBff.Schema do
     Enum.reduce(types, {seen, []}, fn %{name: name, fields: fields, line: line}, {seen, before} ->
       fail = &__fail__(file, line, &1)
       check_record_name!(name, "type", fail)
-      allowed = %{blocks: [], types: external ++ before, all_types: all}
+      # A type can't know the blocks (types.ex compiles first), so its unknown type
+      # names the rule: a block may be what the field was meant to hold.
+      allowed = %{
+        blocks: [],
+        types: external ++ before,
+        all_types: all,
+        rule:
+          "; a type holds a primitive, an enum, a type declared before it or a list of one, never a block"
+      }
+
       validate_fields!(inspect(name), fields, allowed, file)
 
       seen =
@@ -419,10 +463,12 @@ defmodule MicaBff.Schema do
         fail.("#{at} holds type #{inspect(element)}, which isn't declared before it")
 
       match?({:list, _}, type) ->
-        fail.("#{at}: a list holds one primitive or declared type, got #{inspect(element)}")
+        fail.(
+          "#{at}: a list holds one primitive or declared type, got #{inspect(element)}#{allowed.rule}"
+        )
 
       true ->
-        fail.("#{at} has unknown type #{inspect(type)}")
+        fail.("#{at} has unknown type #{inspect(type)}#{allowed.rule}")
     end
 
     if Map.has_key?(field, :fallback) and not match?({:enum, _}, type),

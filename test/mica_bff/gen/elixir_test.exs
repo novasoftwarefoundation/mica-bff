@@ -278,6 +278,30 @@ defmodule MicaBff.Gen.ElixirTest do
     end
   end
 
+  # A server bug fails its page rather than reaching the app as a dropped value.
+  test "a list prop that isn't a list, or holds nil, raises, in a block or a type" do
+    ns = namespace_for(Spec)
+
+    [tagged, album, gallery, image] =
+      Enum.map([Tagged, Album, Gallery, Image], &Module.concat(ns, &1))
+
+    assert_raise ArgumentError, ~r/Tagged: list prop tags is not a list: "a"/, fn ->
+      tagged.to_map(struct!(tagged, id: "t", tone: :success, tags: "a"))
+    end
+
+    assert_raise ArgumentError, ~r/Tagged: list prop tags holds nil/, fn ->
+      tagged.to_map(struct!(tagged, id: "t", tone: :success, tags: ["a", nil]))
+    end
+
+    assert_raise ArgumentError, ~r/Gallery: list prop photos holds nil/, fn ->
+      cover = struct!(image, url: "/a.png")
+
+      album.to_map(
+        struct!(album, id: "album", gallery: struct!(gallery, cover: cover, photos: [nil]))
+      )
+    end
+  end
+
   test "a block without fields encodes to empty props" do
     divider = Module.concat(namespace_for(Spec), Divider)
 
