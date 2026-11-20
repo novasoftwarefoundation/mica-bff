@@ -242,6 +242,9 @@ defmodule MicaBff.SchemaTest do
            ":a.children holds type :a, which isn't declared before it"},
           {"deftype :a do field :x, {:list, {:list, :string}} end", 3,
            ":a.x: a list holds one primitive or declared type, got {:list, :string}"},
+          # types.ex compiles before blocks.ex, so the message names the rule.
+          {"deftype :a do field :x, :section end", 3,
+           ":a.x has unknown type :section; a type holds a primitive, an enum or a type declared before it, never a block"},
           {"deftype :integer do end", 3,
            "type :integer clashes with the primitive type :integer"},
           {"deftype :a do\ndeftype :b do end\nend", 4, "deftype :b inside deftype :a"},
@@ -276,6 +279,29 @@ defmodule MicaBff.SchemaTest do
       error = assert_raise CompileError, fn -> compile!(body) end
       assert Exception.message(error) =~ "bad.ex:#{line}: #{message}", body
     end
+  end
+
+  test "use with an option other than types fails with the file and line" do
+    source =
+      "defmodule Bad#{System.unique_integer([:positive])} do\n  use MicaBff.Schema, typez: X\nend\n"
+
+    assert_raise CompileError,
+                 ~r/bad\.ex:2: use MicaBff\.Schema has unknown option\(s\) \[:typez\]; allowed: \[:types\]/,
+                 fn -> Code.compile_string(source, "bad.ex") end
+  end
+
+  test "a part of the spec that declares another kind fails naming what to move" do
+    [{module, _}] = compile!("defblock :a do end\ndeftype :option do end")
+
+    message =
+      "#{inspect(module)} holds only blocks, but declares :option in types; move it to the module of its kind"
+
+    assert_raise CompileError, ~r/#{Regex.escape(message)}/, fn ->
+      MicaBff.Schema.only!(module, :blocks)
+    end
+
+    assert [%{name: :a}] =
+             MicaBff.Schema.only!(compile!("defblock :a do end") |> hd() |> elem(0), :blocks)
   end
 
   defp compile!(body, opts \\ []) do

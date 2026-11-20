@@ -7,10 +7,10 @@ defmodule MicaBff.Spec do
 
   # Each part holds only its own kind, so its duplicate checks cover the whole spec:
   # a defpage in blocks.ex or a defblock in pages.ex fails to compile here.
-  %{blocks: [], markup: [], pages: [], types: types} = MicaBff.Types.__schema__()
-  %{blocks: blocks, markup: [], pages: [], types: []} = MicaBff.Blocks.__schema__()
-  %{blocks: [], markup: markup, pages: [], types: []} = MicaBff.Markup.__schema__()
-  %{blocks: [], markup: [], pages: pages, types: []} = MicaBff.Pages.__schema__()
+  types = MicaBff.Schema.only!(MicaBff.Types, :types)
+  blocks = MicaBff.Schema.only!(MicaBff.Blocks, :blocks)
+  markup = MicaBff.Schema.only!(MicaBff.Markup, :markup)
+  pages = MicaBff.Schema.only!(MicaBff.Pages, :pages)
 
   # Blocks, markup and types are types in one namespace in the generated code.
   for {name, count} <- Enum.frequencies(Enum.map(blocks ++ markup ++ types, & &1.name)),
