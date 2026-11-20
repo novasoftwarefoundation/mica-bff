@@ -215,15 +215,30 @@ extension <%= @namespace %> {
             case .failure(let problem): return problem
             }
             let (first, last) = (found.first, found.last)
-            func inside(_ span: Span) -> Swift.Bool {
-                first <= span.first && span.last <= last && (span.first, span.last) != (first, last)
+            // ponytail: one pass over `kept` per region, quadratic in kept regions (as the crossing
+            // check); an interval tree if a page ever sends thousands of side-by-side regions.
+            var around = 0
+            var deepestInside = 0
+            var goesAround = false
+            for span in kept {
+                if span.first <= first && last <= span.last {
+                    around += 1
+                } else if first <= span.first && span.last <= last {
+                    deepestInside = Swift.max(deepestInside, span.depth + 1)
+                    goesAround = true
+                }
             }
-            let around = kept.filter { $0.first <= first && last <= $0.last }.count
-            let deepest = kept.filter(inside).map { $0.depth + 1 }.reduce(around + 1) { Swift.max($0, $1) }
+            let deepest = Swift.max(around + 1, deepestInside)
             if deepest > Self.maxRegionDepth {
                 return Problem(reason: "region from \"\(region.start)\" to \"\(region.end)\": regions would nest \(deepest) deep, more than \(Self.maxRegionDepth)")
             }
-            for index in kept.indices where inside(kept[index]) { kept[index].depth += 1 }
+            if goesAround {
+                for index in kept.indices
+                where first <= kept[index].first && kept[index].last <= last
+                    && (kept[index].first, kept[index].last) != (first, last) {
+                    kept[index].depth += 1
+                }
+            }
             kept.append(Span(region: region, first: first, last: last, depth: around + 1))
             return nil
         }

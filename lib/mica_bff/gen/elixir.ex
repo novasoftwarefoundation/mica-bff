@@ -282,27 +282,39 @@ defmodule MicaBff.Gen.Elixir do
       # region within the depth limit; or why not. A kept region is
       # `{region, first, last, depth}`. The regions around the new one set its depth; the
       # ones it goes around get one deeper (one over the same stretch before it is around it).
+      # ponytail: one pass over `kept` per region, quadratic in kept regions (as the crossing
+      # check); an interval tree if a page ever sends thousands of side-by-side regions.
       defp __keep__(positions, kept, %{start: start, end: stop} = region) do
         with {:ok, first, last} <- __span__(positions, kept, region) do
-          inside? = fn {_region, a, b, _depth} ->
-            first <= a and b <= last and {a, b} != {first, last}
-          end
+          {around, deepest_inside, inside?} =
+            Enum.reduce(kept, {0, 0, false}, fn {_region, a, b, depth},
+                                                {around, deepest, inside?} ->
+              cond do
+                a <= first and last <= b -> {around + 1, deepest, inside?}
+                first <= a and b <= last -> {around, max(deepest, depth + 1), true}
+                true -> {around, deepest, inside?}
+              end
+            end)
 
-          around = Enum.count(kept, fn {_region, a, b, _depth} -> a <= first and last <= b end)
+          deepest = max(around + 1, deepest_inside)
 
-          deepest =
-            Enum.max([around + 1 | for({_r, _a, _b, d} = k <- kept, inside?.(k), do: d + 1)])
+          cond do
+            deepest > unquote(MicaBff.Gen.max_region_depth()) ->
+              {:error,
+               ~s(region from "#{start}" to "#{stop}": regions would nest #{deepest} deep, more than #{unquote(MicaBff.Gen.max_region_depth())})}
 
-          if deepest > unquote(MicaBff.Gen.max_region_depth()) do
-            {:error,
-             ~s(region from "#{start}" to "#{stop}": regions would nest #{deepest} deep, more than #{unquote(MicaBff.Gen.max_region_depth())})}
-          else
-            deeper =
-              Enum.map(kept, fn {r, a, b, d} = k ->
-                if inside?.(k), do: {r, a, b, d + 1}, else: k
-              end)
+            inside? ->
+              deeper =
+                Enum.map(kept, fn {r, a, b, d} = k ->
+                  if first <= a and b <= last and {a, b} != {first, last},
+                    do: {r, a, b, d + 1},
+                    else: k
+                end)
 
-            {:ok, [{region, first, last, around + 1} | deeper]}
+              {:ok, [{region, first, last, around + 1} | deeper]}
+
+            true ->
+              {:ok, [{region, first, last, around + 1} | kept]}
           end
         end
       end

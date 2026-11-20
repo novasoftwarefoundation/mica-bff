@@ -247,7 +247,7 @@ defmodule MicaBff.Gen.SwiftTest do
             ~s|    tree(#"#{name}"#, #"#{JSON.encode!(page)}"#, #{check}, #"#{JSON.encode!(tree)}"#),|
 
           %{"depth" => depth} ->
-            ~s|    deep(#"#{name}"#, #"#{JSON.encode!(page)}"#, #{check}, #{depth}, #{length(ids)}),|
+            ~s|    deep(#"#{name}"#, #"#{JSON.encode!(page)}"#, #{check}, #{depth}, #{JSON.encode!(ids)}),|
         end
       end
 
@@ -272,7 +272,7 @@ defmodule MicaBff.Gen.SwiftTest do
         deep("100,000 regions over the same blocks",
              BFF.Page(blocks: [.unknown(type: "a"), .unknown(type: "b")], ids: ["a", "b"],
                       markup: (0..<100_000).map { _ in BFF.Region(start: "a", end: "b", kind: .border(.init())) }),
-             "region from \\"a\\" to \\"b\\": regions would nest 33 deep, more than 32", 32, 2),
+             "region from \\"a\\" to \\"b\\": regions would nest 33 deep, more than 32", 32, ["a", "b"]),
     ]
     """)
   end
@@ -336,21 +336,24 @@ defmodule MicaBff.Gen.SwiftTest do
         }.max() ?? 0
     }
 
-    func count(_ nodes: [BFF.Node]) -> Int {
-        nodes.map { node -> Int in
-            if case let .region(_, children) = node { count(children) } else { 1 }
-        }.reduce(0, +)
+    func ids(_ nodes: [BFF.Node]) -> [String?] {
+        nodes.flatMap { node -> [String?] in
+            switch node {
+            case let .block(id, _): [id]
+            case let .region(_, children): ids(children)
+            }
+        }
     }
 
-    /// A page too deep to write its tree out: its check, the tree's depth and how many blocks show.
-    func deep(_ label: String, _ page: BFF.Page, _ check: String?, _ expectedDepth: Int, _ blocks: Int) -> Bool {
+    /// A page too deep to write its tree out: its check, the tree's depth and the blocks it shows.
+    func deep(_ label: String, _ page: BFF.Page, _ check: String?, _ expectedDepth: Int, _ blocks: [String?]) -> Bool {
         let tree = page.tree()
-        if page.check() == check, depth(tree) == expectedDepth, count(tree) == blocks { return true }
-        print("FAIL \\(label): check \\(page.check() ?? "nil"), depth \\(depth(tree)), blocks \\(count(tree))")
+        if page.check() == check, depth(tree) == expectedDepth, ids(tree) == blocks { return true }
+        print("FAIL \\(label): check \\(page.check() ?? "nil"), depth \\(depth(tree)), blocks \\(ids(tree))")
         return false
     }
 
-    func deep(_ label: String, _ json: String, _ check: String?, _ expectedDepth: Int, _ blocks: Int) -> Bool {
+    func deep(_ label: String, _ json: String, _ check: String?, _ expectedDepth: Int, _ blocks: [String?]) -> Bool {
         guard let page = try? JSONDecoder().decode(BFF.Page.self, from: Data(json.utf8)) else {
             print("FAIL \\(label): doesn't decode")
             return false

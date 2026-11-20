@@ -6,7 +6,8 @@ defmodule MicaBff.Regions do
   `{"kind": "border", "start": "rewards", "end": "pending", "props": {...}}`.
 
   All regions nest, as in XML: two regions share no block, or one covers all of the
-  other; regions over the same stretch nest in list order, the first outermost. The
+  other; regions over the same stretch nest in list order, the first outermost; and
+  regions nest at most 32 deep (`MicaBff.Gen.max_region_depth/0`). The
   server never sends regions that don't (`view_model/2` raises), and a client leaves
   out a region that doesn't and still shows the blocks. A client ignores a kind it
   doesn't know, and still renders the blocks and the regions inside it.
