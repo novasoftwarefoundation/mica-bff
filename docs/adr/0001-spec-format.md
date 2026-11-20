@@ -77,7 +77,7 @@ The rules are part of the format, so they are generated, with the fixtures in `f
 
 ### Compatibility
 
-- **Tolerant reader** (Melle, amended 2026-11-17): `required` binds the server only. Clients treat every prop as optional and always render something for a block type they know, even if it looks rough, so a server slip or an older app never makes content disappear; the generated Swift has every prop optional. Before, a known block with a required prop missing or of the wrong type became a fallback, which is how untitled adverts disappeared from the app (mono#2084).
+- **Tolerant reader** (Melle, amended 2026-11-17, 2026-11-20): `required` binds the server only. Clients treat every prop as optional and always render something for a block type they know, even if it looks rough, so a slip the server doesn't catch, or an older app, never makes content disappear; one the encoder catches fails the page (see Serialization). The generated Swift has every prop optional. Before, a known block with a required prop missing or of the wrong type became a fallback, which is how untitled adverts disappeared from the app (mono#2084).
 - The client renders an unknown block type as a fallback block; the rest of the page renders.
 - A prop that fails to decode (for example, its type changed) is treated as missing: the block still renders without it. Props that aren't an object give the block with every prop missing.
 - New blocks and new optional props can be added at any time. A new field on an existing block is always optional, so an older server or a cached page still decodes in a newer client.
