@@ -165,17 +165,17 @@ defmodule MicaBff.CompatTest do
     assert breaking_changes(%{blocks: [], pages: []}, spec([%{name: :image, fields: []}])) == []
   end
 
-  test "markup kinds follow the rules for blocks; an old schema without markup has none" do
+  test "region kinds follow the rules for blocks; an old schema without regions has none" do
     old = %{
       blocks: [],
-      markup: [%{name: :part, fields: [field(:role)]}, %{name: :border, fields: []}]
+      regions: [%{name: :part, fields: [field(:role)]}, %{name: :border, fields: []}]
     }
 
-    new = %{blocks: [], markup: [%{name: :part, fields: [field(:role, required: true)]}]}
+    new = %{blocks: [], regions: [%{name: :part, fields: [field(:role, required: true)]}]}
 
     assert breaking_changes(old, new) == [
              "part.role: changed from optional to required",
-             "border: markup removed"
+             "border: region removed"
            ]
 
     assert breaking_changes(%{blocks: []}, old) == []

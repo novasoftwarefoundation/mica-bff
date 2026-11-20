@@ -6,9 +6,9 @@ defmodule MicaBff.SchemaTest do
       compile!("""
       defblock :b do field :y, :integer, required: true; field :x, :string end
       defpage :settings
-      defmarkup :part do field :role, {:enum, [:main, :related]}, required: true, fallback: :main end
+      defregion :part do field :role, {:enum, [:main, :related]}, required: true, fallback: :main end
       defblock :a do end
-      defmarkup :border do end
+      defregion :border do end
       defpage :home
       """)
 
@@ -23,7 +23,7 @@ defmodule MicaBff.SchemaTest do
                },
                %{name: :a, fields: []}
              ],
-             markup: [
+             regions: [
                %{
                  name: :part,
                  fields: [
@@ -61,7 +61,7 @@ defmodule MicaBff.SchemaTest do
 
     assert module.__schema__() == %{
              blocks: [],
-             markup: [],
+             regions: [],
              pages: [
                %{
                  name: :marketplace,
@@ -87,7 +87,7 @@ defmodule MicaBff.SchemaTest do
 
     assert module.__schema__() == %{
              blocks: [%{name: :a, fields: [%{name: :x, type: :string, required: false}]}],
-             markup: [],
+             regions: [],
              pages: [],
              types: []
            }
@@ -169,7 +169,7 @@ defmodule MicaBff.SchemaTest do
           {"defblock :a do end\ndefblock :b do field :child, :a end", 4,
            ":b.child holds block :a; blocks have no children"},
           {"defblock :a do\ndefblock :b do end\nend", 4, "defblock :b inside defblock :a"},
-          {"field :x, :string", 3, "field :x outside a defblock, deftype or defmarkup"},
+          {"field :x, :string", 3, "field :x outside a defblock, deftype or defregion"},
           {"defblock :SectionHeader do end", 3,
            "block name :SectionHeader must be a snake_case atom"},
           {~s(defblock :a do field "x", :string end), 3,
@@ -253,21 +253,21 @@ defmodule MicaBff.SchemaTest do
           {"defblock :a do end\ndeftype :a do end", 4, ":a is defined twice"},
           {"defblock :a_b do end\ndeftype :a__b do end", 4,
            "the spec has :a_b and :a__b, which clients both name aB"},
-          # Markup kinds: fields like a block's, but never start or end; a block never id.
-          {"defmarkup :a do field :x, :nope end", 3, ":a.x has unknown type :nope"},
-          {"defmarkup :a do\ndefmarkup :b do end\nend", 4, "defmarkup :b inside defmarkup :a"},
-          {"defblock :a do end\ndefmarkup :a do end", 4, ":a is defined twice"},
+          # Region kinds: fields like a block's, but never start or end; a block never id.
+          {"defregion :a do field :x, :nope end", 3, ":a.x has unknown type :nope"},
+          {"defregion :a do\ndefregion :b do end\nend", 4, "defregion :b inside defregion :a"},
+          {"defblock :a do end\ndefregion :a do end", 4, ":a is defined twice"},
           {"defblock :a do field :id, :string end", 3,
            "block :a can't have field :id: every block has it next to its props"},
-          {"defmarkup :a do field :start, :string end", 3,
-           "markup :a can't have field :start: every markup has it next to its props"},
-          {"defmarkup :a do field :end, :string end", 3,
-           "markup :a can't have field :end: every markup has it next to its props"},
+          {"defregion :a do field :start, :string end", 3,
+           "region :a can't have field :start: every region has it next to its props"},
+          {"defregion :a do field :end, :string end", 3,
+           "region :a can't have field :end: every region has it next to its props"},
           # A param is a query parameter of a primitive type, declared in its page.
           {"param :year, :integer", 3, "param :year outside a defpage"},
           {"defblock :a do param :year, :integer end", 3, "param :year outside a defpage"},
           {"defpage :a do field :x, :string end", 3,
-           "field :x outside a defblock, deftype or defmarkup"},
+           "field :x outside a defblock, deftype or defregion"},
           {"defpage :a do\nparam :year, :integer\nparam :year, :string\nend", 5,
            "page :a has param :year twice"},
           {"defpage :a do param :Year, :integer end", 3,
