@@ -208,15 +208,40 @@ defmodule MicaBff.Gen.ElixirTest do
   end
 
   # The rules as fixtures, so every client checks the same cases (the Swift test reads them too).
+  # A case gives its whole tree, or for one too deep to write out, the tree's depth.
   test "check and tree follow the markup rules" do
     ns = namespace_for(MicaBff.Spec)
 
-    for %{"name" => name, "ids" => ids, "markup" => markup, "check" => check, "tree" => tree} <-
+    for %{"name" => name, "ids" => ids, "markup" => markup, "check" => check} = rule <-
           fixture("fixtures/rules/markup.json") do
       regions = Enum.map(markup, &%{kind: &1["kind"], start: &1["start"], end: &1["end"]})
+      tree = ns.tree(ids, regions)
 
       assert ns.check(ids, regions) == if(check, do: {:error, check}, else: :ok), name
-      assert wire_tree(ns.tree(ids, regions), regions) == tree, name
+
+      case rule do
+        %{"tree" => expected} ->
+          assert wire_tree(tree, regions) == expected, name
+
+        %{"depth" => depth} ->
+          assert {tree_depth(tree), block_ids(tree)} == {depth, ids}, name
+      end
+    end
+  end
+
+  # Without the limit, the 100,000th region would be 100,000 deep: as deep as a client
+  # recursion that overflows a phone's stack.
+  test "regions nest at most 32 deep: deeper ones are refused and left out, and every block shows" do
+    ns = namespace_for(MicaBff.Spec)
+    border = Module.concat(ns, Border)
+    section = Module.concat(ns, Section)
+    regions = for _ <- 1..100_000, do: struct!(border, start: "a", end: "b")
+
+    tree = ns.tree(["a", "b"], regions)
+    assert {tree_depth(tree), block_ids(tree)} == {32, ["a", "b"]}
+
+    assert_raise ArgumentError, ~r/regions would nest 33 deep, more than 32/, fn ->
+      ns.view_model([struct!(section, id: "a"), struct!(section, id: "b")], regions)
     end
   end
 
@@ -231,6 +256,22 @@ defmodule MicaBff.Gen.ElixirTest do
           "region" => Enum.find_index(regions, &(&1 == region)),
           "children" => wire_tree(children, regions)
         }
+    end)
+  end
+
+  defp tree_depth(nodes) do
+    nodes
+    |> Enum.map(fn
+      {:block, _id} -> 0
+      {:region, _region, children} -> 1 + tree_depth(children)
+    end)
+    |> Enum.max(fn -> 0 end)
+  end
+
+  defp block_ids(nodes) do
+    Enum.flat_map(nodes, fn
+      {:block, id} -> [id]
+      {:region, _region, children} -> block_ids(children)
     end)
   end
 

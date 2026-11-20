@@ -115,19 +115,21 @@ extension <%= @namespace %> {
             self.markup = markup
         }
 
+        /// How deep regions may nest (ADR 0001): `tree()` and the views after it recurse once
+        /// per level, so a limit keeps deep markup from overflowing the stack.
+        static let maxRegionDepth = <%= @max_region_depth %>
+
         /// Why the markup doesn't hold, for the first region that doesn't, or nil when it does:
         /// a region whose `start` or `end` is no block's id or an id two blocks have, one
-        /// that ends before it starts, or one that crosses a region before it. Regions nest as
-        /// in XML: two regions share no block, or one covers all of the other. Regions of a
-        /// kind this app doesn't know are left out.
+        /// that ends before it starts, one that crosses a region before it, or one that would
+        /// make regions nest deeper than `maxRegionDepth`. Regions nest as in XML: two regions
+        /// share no block, or one covers all of the other. Regions of a kind this app doesn't
+        /// know are left out.
         func check() -> Swift.String? {
             let positions = idPositions()
             var kept: [Span] = []
             for region in known {
-                switch span(region, positions, kept) {
-                case .success(let found): kept.append(found)
-                case .failure(let problem): return problem.reason
-                }
+                if let problem = keep(region, positions, &kept) { return problem.reason }
             }
             return nil
         }
@@ -139,7 +141,7 @@ extension <%= @namespace %> {
             let positions = idPositions()
             var kept: [Span] = []
             for region in known {
-                if case .success(let found) = span(region, positions, kept) { kept.append(found) }
+                _ = keep(region, positions, &kept)
             }
             // Outermost first: by start, the longest first, then in list order.
             let spans = kept.enumerated()
@@ -169,6 +171,8 @@ extension <%= @namespace %> {
             let region: Region
             let first: Swift.Int
             let last: Swift.Int
+            /// How many regions this one is in, itself included.
+            var depth: Swift.Int
         }
 
         private struct Problem: Swift.Error {
@@ -201,6 +205,44 @@ extension <%= @namespace %> {
             }
         }
 
+        /// Adds `region` to `kept` when it nests with them and keeps every region within
+        /// `maxRegionDepth`, or says why not. The regions around it set its depth; the ones it
+        /// goes around get one deeper (one over the same stretch before it is around it).
+        private func keep(_ region: Region, _ positions: [Swift.String: Swift.Int?], _ kept: inout [Span]) -> Problem? {
+            let found: Span
+            switch span(region, positions, kept) {
+            case .success(let span): found = span
+            case .failure(let problem): return problem
+            }
+            let (first, last) = (found.first, found.last)
+            // ponytail: one pass over `kept` per region, quadratic in kept regions (as the crossing
+            // check); an interval tree if a page ever sends thousands of side-by-side regions.
+            var around = 0
+            var deepestInside = 0
+            var goesAround = false
+            for span in kept {
+                if span.first <= first && last <= span.last {
+                    around += 1
+                } else if first <= span.first && span.last <= last {
+                    deepestInside = Swift.max(deepestInside, span.depth + 1)
+                    goesAround = true
+                }
+            }
+            let deepest = Swift.max(around + 1, deepestInside)
+            if deepest > Self.maxRegionDepth {
+                return Problem(reason: "region from \"\(region.start)\" to \"\(region.end)\": regions would nest \(deepest) deep, more than \(Self.maxRegionDepth)")
+            }
+            if goesAround {
+                for index in kept.indices
+                where first <= kept[index].first && kept[index].last <= last
+                    && (kept[index].first, kept[index].last) != (first, last) {
+                    kept[index].depth += 1
+                }
+            }
+            kept.append(Span(region: region, first: first, last: last, depth: around + 1))
+            return nil
+        }
+
         /// The positions a region covers, when it nests with the regions `kept` before it.
         private func span(_ region: Region, _ positions: [Swift.String: Swift.Int?], _ kept: [Span]) -> Swift.Result<Span, Problem> {
             let name = "region from \"\(region.start)\" to \"\(region.end)\""
@@ -221,7 +263,7 @@ extension <%= @namespace %> {
             if let crossed {
                 return .failure(Problem(reason: "\(name) crosses the region from \"\(crossed.region.start)\" to \"\(crossed.region.end)\""))
             }
-            return .success(Span(region: region, first: first, last: last))
+            return .success(Span(region: region, first: first, last: last, depth: 0))
         }
     }
 <%= for source <- @structs do %>

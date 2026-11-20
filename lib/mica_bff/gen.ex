@@ -9,6 +9,13 @@ defmodule MicaBff.Gen do
   @version Mix.Project.config()[:version]
 
   @doc """
+  How deep regions may nest, part of the region rules every generator emits (ADR 0001):
+  a client renders the tree recursively, so a limit keeps deep markup from overflowing
+  its stack. Real pages nest a few deep.
+  """
+  def max_region_depth, do: 32
+
+  @doc """
   Where generated code comes from: `"mica-bff 0.1.0 at 9feb740"`, or without the
   commit when git doesn't give one.
   """
