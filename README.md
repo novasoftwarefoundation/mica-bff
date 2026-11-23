@@ -7,7 +7,7 @@ The spec for the Mica backend for frontend (BFF): the blocks the server sends an
 - `lib/mica_bff/blocks.ex`: the block catalogue
 - `lib/mica_bff/regions.ex`: the region kinds that group a page's blocks
 - `lib/mica_bff/pages.ex`: the pages the BFF serves, with their query parameters
-- `lib/mica_bff/spec.ex`: the spec, types, blocks, region kinds and pages together; the Swift generator and the Elixir macro read its `__schema__/0`
+- `lib/mica_bff/spec.ex`: the spec, types, blocks, region kinds and pages together; the Swift and Kotlin generators and the Elixir macro read its `__schema__/0`
 - `lib/mica_bff/compat.ex`: what counts as a breaking change between two specs
 - `lib/mix/tasks/bff.compat.ex`: compares the spec with the last `v*` tag; CI fails on a breaking change
 - `lib/mica_bff/gen/elixir.ex`: the macro that defines the Elixir block, region and type modules and the rules for a page's regions
@@ -19,7 +19,7 @@ The spec for the Mica backend for frontend (BFF): the blocks the server sends an
 Blocks travel as JSON: `{"id": "studies", "type": "section", "props": {"title": "...", "body": "...", "to": "/..."}}`; a type is a JSON object of its fields inside a prop. A page (`defpage :home`) is `GET /bff/page/home`, answered with its view model, `{"blocks": [...], "markup": [...]}`: the blocks, and its markup beside them, regions that group stretches of blocks by id (`{"kind": "border", "start": "rewards", "end": "pending", "props": {}}`) and nest as in XML. Its params are query parameters (`param :year, :integer` reads `?year=2025`). A filter is a link to the same page with the filter applied, which the app loads in place. The app sends the spec version it implements in the `x-bff-spec` header.
 
 ```sh
-mix test   # the Swift tests need swiftc, the Kotlin tests kotlinc and java; without the compiler they are skipped locally, never in CI
+mix test   # the Swift tests need swiftc, the Kotlin tests kotlinc and a JDK; without the compiler they are skipped locally, never in CI
 mix run -e 'IO.inspect(MicaBff.Spec.__schema__())'
 
 # fails on a breaking change against the last v* tag (or --against TAG); without a tag it passes

@@ -225,11 +225,10 @@ object <%= @namespace %> {
 <% end %>
     private fun readString(value: kotlin.Any?): kotlin.String? = value as? kotlin.String
 
-    /** Any number without a fraction: 3 and 3.0, not 1.5. */
+    /** Any number without a fraction that fits: 3 and 3.0, not 1.5 or 2^63. */
     private fun readLong(value: kotlin.Any?): kotlin.Long? = when (value) {
         is kotlin.Long -> value
-        is kotlin.Int, is kotlin.Short, is kotlin.Byte -> (value as kotlin.Number).toLong()
-        is kotlin.Number -> value.toDouble().let { if (it.toLong().toDouble() == it) it.toLong() else null }
+        is kotlin.Number -> value.toLong().takeIf { it.toDouble() == value.toDouble() && value.toDouble() < 9.223372036854775808E18 }
         else -> null
     }
 

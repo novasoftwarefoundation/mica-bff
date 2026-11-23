@@ -35,10 +35,34 @@ defmodule MicaBff.Gen.KotlinTest do
                      "Api"
                    )
                  end
+
+    # Every class is a file of its own, and macOS and Windows ignore case in file names.
+    assert_raise ArgumentError,
+                 ~r/block :blocknode can't be generated in Kotlin: Blocknode differs only in case from BlockNode, which is reserved/,
+                 fn ->
+                   MicaBff.Gen.Kotlin.generate(%{blocks: [%{name: :blocknode, fields: []}]})
+                 end
+
+    for schema <- [
+          %{blocks: [%{name: :signup, fields: []}, %{name: :sign_up, fields: []}]},
+          %{blocks: [%{name: :signup, fields: []}], regions: [%{name: :sign_up, fields: []}]},
+          %{blocks: [%{name: :signup, fields: []}], types: [%{name: :sign_up, fields: []}]}
+        ] do
+      assert_raise ArgumentError,
+                   ~r/:sign_up can't be generated in Kotlin: SignUp and Signup \(block :signup\) would be one class file/,
+                   fn -> MicaBff.Gen.Kotlin.generate(schema) end
+    end
   end
 
   test "enum fields whose class would shadow the generated code, the namespace or their block are refused" do
-    for {name, namespace} <- [block: "BFF", region_kind: "BFF", badge: "BFF", api: "Api"] do
+    for {name, namespace} <- [
+          block: "BFF",
+          region_kind: "BFF",
+          companion: "BFF",
+          blocknode: "BFF",
+          badge: "BFF",
+          api: "Api"
+        ] do
       schema = %{
         blocks: [
           %{
@@ -52,6 +76,20 @@ defmodule MicaBff.Gen.KotlinTest do
         MicaBff.Gen.Kotlin.generate(schema, "bff", namespace)
       end
     end
+
+    enum = &%{name: &1, type: {:enum, [:a]}, required: false, fallback: :a}
+    twins = %{blocks: [%{name: :badge, fields: [enum.(:signup), enum.(:sign_up)]}]}
+
+    assert_raise ArgumentError,
+                 ~r/enum field badge.sign_up can't be generated in Kotlin: SignUp and Signup \(enum field badge.signup\)/,
+                 fn -> MicaBff.Gen.Kotlin.generate(twins) end
+
+    # The same enum in two records is two classes, each in its record's.
+    apart = %{
+      blocks: [%{name: :badge, fields: [enum.(:tone)]}, %{name: :tag, fields: [enum.(:tone)]}]
+    }
+
+    assert MicaBff.Gen.Kotlin.generate(apart) =~ "enum class Tone"
   end
 
   test "the file starts with the header and its package" do
@@ -419,6 +457,18 @@ defmodule MicaBff.Gen.KotlinTest do
         ~s|BFF.RowItem(`in` = "x")|
       ),
       block("a number too large for an integer", row.(%{"count" => 1.0e30}), "BFF.RowItem()"),
+      # 2^63 is one past the largest Long, and as a Double it rounds down to it.
+      block("2^63 for an integer", row.(%{"count" => 9.223372036854775808e18}), "BFF.RowItem()"),
+      expect(
+        "2^63 as a BigInteger for an integer",
+        ~s|BFF.RowItem.from(mapOf("count" to java.math.BigInteger("9223372036854775808")))|,
+        "BFF.RowItem()"
+      ),
+      expect(
+        "the smallest Long as a Double",
+        ~s|BFF.RowItem.from(mapOf("count" to -9.223372036854775808E18))|,
+        "BFF.RowItem(count = Long.MIN_VALUE)"
+      ),
       expect(
         "not a number for an integer",
         ~s|BFF.RowItem.from(mapOf("count" to Double.NaN))|,
@@ -672,7 +722,12 @@ defmodule MicaBff.Gen.KotlinTest do
   # macOS has a `java` on the PATH that only says no JDK is installed, so one counts
   # when it runs.
   defp java do
-    homes = [System.get_env("JAVA_HOME"), "/opt/homebrew/opt/openjdk@21"]
+    # The last is what `brew install kotlin` brings.
+    homes = [
+      System.get_env("JAVA_HOME"),
+      "/opt/homebrew/opt/openjdk@21",
+      "/opt/homebrew/opt/openjdk"
+    ]
 
     candidates =
       [System.find_executable("java")] ++
@@ -681,6 +736,6 @@ defmodule MicaBff.Gen.KotlinTest do
     Enum.find(candidates, fn java ->
       java && File.exists?(java) &&
         match?({_, 0}, System.cmd(java, ["-version"], stderr_to_stdout: true))
-    end) || flunk("no working java on the PATH, in JAVA_HOME or in /opt/homebrew/opt/openjdk@21")
+    end) || flunk("no working java on the PATH, in JAVA_HOME or in /opt/homebrew/opt/openjdk*")
   end
 end

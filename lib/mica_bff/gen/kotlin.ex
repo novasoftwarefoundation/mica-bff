@@ -80,13 +80,12 @@ defmodule MicaBff.Gen.Kotlin do
     type_names = Enum.map(types, & &1.name)
     reserved = [namespace | @reserved]
 
-    for {kind, records} <- [block: blocks, region: regions, type: types],
-        %{name: name} <- records,
-        type_name(name) in reserved do
-      raise ArgumentError,
-            "#{kind} #{inspect(name)} can't be generated in Kotlin: " <>
-              "#{type_name(name)} is reserved by Kotlin or the generated code"
-    end
+    named =
+      for {kind, records} <- [block: blocks, region: regions, type: types],
+          %{name: name} <- records,
+          do: {"#{kind} #{inspect(name)}", type_name(name)}
+
+    refuse_clashes!(named, reserved)
 
     blocks = Enum.map(blocks, &record(&1, namespace, type_names, "Block"))
     regions = Enum.map(regions, &record(&1, namespace, type_names, "RegionKind"))
@@ -95,12 +94,10 @@ defmodule MicaBff.Gen.Kotlin do
 
     # An enum's class is nested in its record's class, so there it shadows these, and
     # the record itself.
-    for %{name: record, type: record_type, enums: enums} <- records,
-        %{field: name, type: type} <- enums,
-        type in [record_type | reserved] do
-      raise ArgumentError,
-            "enum field #{record}.#{name} can't be generated in Kotlin: " <>
-              "#{type} is reserved by Kotlin or the generated code"
+    for %{name: record, type: record_type, enums: enums} <- records do
+      enums
+      |> Enum.map(&{"enum field #{record}.#{&1.field}", &1.type})
+      |> refuse_clashes!([record_type | reserved])
     end
 
     header =
@@ -230,6 +227,38 @@ defmodule MicaBff.Gen.Kotlin do
   end
 
   defp enum(_field), do: nil
+
+  # Refuses a class named as one of `reserved`, and two classes with one name. Names are
+  # compared without case: every class is a file of its own (`BFF$SignUp.class`), and where
+  # file names ignore case (macOS, Windows) one of two that differ only in case overwrites
+  # the other.
+  defp refuse_clashes!(classes, reserved) do
+    Enum.reduce(classes, %{}, fn {label, type}, seen ->
+      key = String.downcase(type)
+
+      reason =
+        cond do
+          type in reserved ->
+            "#{type} is reserved by Kotlin or the generated code"
+
+          taken = Enum.find(reserved, &(String.downcase(&1) == key)) ->
+            "#{type} differs only in case from #{taken}, " <>
+              "which is reserved by Kotlin or the generated code"
+
+          twin = seen[key] ->
+            {twin_label, twin_type} = twin
+
+            "#{type} and #{twin_type} (#{twin_label}) would be one class file " <>
+              "where file names ignore case"
+
+          true ->
+            nil
+        end
+
+      if reason, do: raise(ArgumentError, "#{label} can't be generated in Kotlin: #{reason}")
+      Map.put(seen, key, {label, type})
+    end)
+  end
 
   defp entry(value), do: value |> to_string() |> String.upcase()
 
