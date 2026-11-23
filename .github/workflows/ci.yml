@@ -7,15 +7,55 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # What this repo develops with.
+          - name: .tool-versions
+          # What mono builds mica-bff with (its .github/workflows/test.yml).
+          - name: OTP 27
+            otp: "27.3.4"
+            elixir: "1.19.6-otp-27"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-      - uses: erlef/setup-beam@v1
+          persist-credentials: false
+      - if: matrix.otp == ''
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         with:
           version-file: .tool-versions
           version-type: strict
+      - if: matrix.otp != ''
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          otp-version: ${{ matrix.otp }}
+          elixir-version: ${{ matrix.elixir }}
+          version-type: strict
+      # The Swift tests compile the generated Swift with swiftc. Install it at the Swift version
+      # Xcode 27 ships instead of relying on the runner image, which once came without it. Swiftly
+      # is checked against swift.org's keys, and checks the toolchain it installs.
+      - name: Install Swift
+        run: |
+          archive="swiftly-$(uname -m).tar.gz"
+          curl -fsSL https://www.swift.org/keys/all-keys.asc | gpg --import -
+          curl -fsSLO "https://download.swift.org/swiftly/linux/$archive"
+          curl -fsSLO "https://download.swift.org/swiftly/linux/$archive.sig"
+          gpg --verify "$archive.sig" "$archive"
+          tar zxf "$archive"
+          ./swiftly init --assume-yes --no-modify-profile --skip-install --quiet-shell-followup
+          . "$HOME/.local/share/swiftly/env.sh"
+          swiftly install --assume-yes --use --post-install-file "$RUNNER_TEMP/swift-post-install.sh" 6.4
+          if [ -f "$RUNNER_TEMP/swift-post-install.sh" ]; then
+            sudo env DEBIAN_FRONTEND=noninteractive bash "$RUNNER_TEMP/swift-post-install.sh"
+          fi
+          echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
+      - run: swiftc --version
       - run: mix compile --warnings-as-errors
       - run: mix format --check-formatted
       - run: mix test
