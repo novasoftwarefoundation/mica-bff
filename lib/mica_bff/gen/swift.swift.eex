@@ -1,8 +1,21 @@
 <%= @header %>
 
+import os
+
 enum <%= @namespace %> {}
 
 extension <%= @namespace %> {
+    /// Reports a prop the server must send but didn't, or sent with a value that doesn't decode
+    /// (`record` and `prop` are spec names; `prop` is "props" when a block or region came without
+    /// its props object). The app still renders what it has (tolerant reader, ADR 0001); this makes
+    /// the server bug or changed type visible. Logs an error to the unified log; bind another
+    /// reporter with `<%= @namespace %>.$reportMissing.withValue(...)`.
+    @TaskLocal static var reportMissing: @Sendable (_ record: Swift.String, _ prop: Swift.String) -> Swift.Void = { record, prop in
+        decodingLog.error("\(record, privacy: .public) has no \(prop, privacy: .public)")
+    }
+
+    private static let decodingLog = os.Logger(subsystem: "mica-bff", category: "decoding")
+
     /// One block on a BFF page. Decoding never fails: a type this app doesn't know
     /// becomes `.unknown`, and a known block always decodes, with the props it could read.
     enum Block: Swift.Decodable, Swift.Equatable, Swift.Sendable {
@@ -23,7 +36,7 @@ extension <%= @namespace %> {
             switch type {
 <%= for block <- @blocks do %>            case "<%= block.name %>":
                 self = .<%= block.case %>((try? container.decode(<%= block.type %>.self, forKey: .props))
-                    ?? <%= block.none %>)
+                    ?? { <%= @namespace %>.reportMissing("<%= block.name %>", "props"); return <%= block.none %> }())
 <% end %>            default:
                 self = .unknown(type: type)
             }
@@ -55,7 +68,7 @@ extension <%= @namespace %> {
             switch kind {
 <%= for kind <- @regions do %>            case "<%= kind.name %>":
                 self.kind = .<%= kind.case %>((try? container.decode(<%= kind.type %>.self, forKey: .props))
-                    ?? <%= kind.none %>)
+                    ?? { <%= @namespace %>.reportMissing("<%= kind.name %>", "props"); return <%= kind.none %> }())
 <% end %>            default:
                 self.kind = .unknown(kind: kind)
             }
@@ -258,6 +271,7 @@ extension <%= @namespace %>.<%= record.type %> {
     init(from decoder: any Swift.Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 <%= for field <- record.fields do %>        self.<%= field.ident %> = <%= field.decode %>
+<% end %><%= for field <- record.fields, field.required do %>        if self.<%= field.ident %> == nil { <%= @namespace %>.reportMissing("<%= record.name %>", "<%= field.name %>") }
 <% end %>    }
 }
 <% end %>
