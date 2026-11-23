@@ -15,9 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # What this repo develops with.
           - name: .tool-versions
-          # What mono builds mica-bff with (its .github/workflows/test.yml).
           - name: OTP 27
             otp: "27.3.4"
             elixir: "1.19.6-otp-27"
@@ -37,10 +35,6 @@ jobs:
           otp-version: ${{ matrix.otp }}
           elixir-version: ${{ matrix.elixir }}
           version-type: strict
-      # The Swift tests compile the generated Swift with swiftc. Install it at the Swift version
-      # Xcode 27 ships instead of relying on the runner image, which once came without it. Swiftly
-      # is pinned by its SHA-256 (1.2.0, signature checked against swift.org's keys when pinned),
-      # and checks the toolchain it installs.
       - name: Install Swift
         run: |
           archive=swiftly-1.2.0-x86_64.tar.gz
