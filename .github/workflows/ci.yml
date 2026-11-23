@@ -39,14 +39,13 @@ jobs:
           version-type: strict
       # The Swift tests compile the generated Swift with swiftc. Install it at the Swift version
       # Xcode 27 ships instead of relying on the runner image, which once came without it. Swiftly
-      # is checked against swift.org's keys, and checks the toolchain it installs.
+      # is pinned by its SHA-256 (1.2.0, signature checked against swift.org's keys when pinned),
+      # and checks the toolchain it installs.
       - name: Install Swift
         run: |
-          archive="swiftly-$(uname -m).tar.gz"
-          curl -fsSL https://www.swift.org/keys/all-keys.asc | gpg --import -
+          archive=swiftly-1.2.0-x86_64.tar.gz
           curl -fsSLO "https://download.swift.org/swiftly/linux/$archive"
-          curl -fsSLO "https://download.swift.org/swiftly/linux/$archive.sig"
-          gpg --verify "$archive.sig" "$archive"
+          echo "0b26b568811404374c7d7f07276b6aad4145db5d1893a45f307de6a94ca8d9c3  $archive" | sha256sum -c -
           tar zxf "$archive"
           ./swiftly init --assume-yes --no-modify-profile --skip-install --quiet-shell-followup
           . "$HOME/.local/share/swiftly/env.sh"
