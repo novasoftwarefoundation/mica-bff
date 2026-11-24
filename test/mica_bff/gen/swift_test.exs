@@ -221,6 +221,26 @@ defmodule MicaBff.Gen.SwiftTest do
     """)
   end
 
+  # Tolerant reader keeps rendering; the report makes a server bug or changed type visible.
+  @tag :swift
+  test "a required prop that is missing or doesn't decode is reported, in blocks, types and regions",
+       %{tmp_dir: dir} do
+    run_swift!(dir, MicaBff.Spec.__schema__(), """
+    [
+        reports("complete", #"{"blocks": [{"type": "advert", "props": {"title": "A", "to": "/a"}}]}"#, []),
+        reports("missing and wrong type", #"{"blocks": [{"type": "advert", "props": {"to": 3}}]}"#,
+                ["advert.title", "advert.to"]),
+        reports("no props object", #"{"blocks": [{"type": "advert"}, {"type": "advert", "props": 1}]}"#,
+                ["advert.props", "advert.props"]),
+        reports("optional props aren't reported", #"{"blocks": [{"type": "section", "props": {}}]}"#, []),
+        reports("a type's", #"{"blocks": [{"type": "filter", "props": {"options": [{"label": "A"}]}}]}"#,
+                ["filter_option.to"]),
+        reports("a region's", #"{"blocks": [], "markup": [{"kind": "background", "start": "a", "end": "a", "props": {}}, {"kind": "part", "start": "a", "end": "a"}]}"#,
+                ["background.color", "part.props"]),
+    ]
+    """)
+  end
+
   # The page fixtures and the rules every client follows (fixtures/rules/markup.json,
   # which the Elixir test reads too).
   @tag :swift
@@ -305,6 +325,19 @@ defmodule MicaBff.Gen.SwiftTest do
 
     func decoded(_ json: String) -> BFF.Page {
         try! JSONDecoder().decode(BFF.Page.self, from: Data(json.utf8))
+    }
+
+    final class Reports: @unchecked Sendable { var items: [String] = [] }
+
+    /// What decoding `json` as a page reports missing, as "record.prop".
+    func reports(_ label: String, _ json: String, _ expected: [String]) -> Bool {
+        let reports = Reports()
+        BFF.$reportMissing.withValue({ record, prop in reports.items.append("\\(record).\\(prop)") }) {
+            _ = decoded(json)
+        }
+        if reports.items == expected { return true }
+        print("FAIL \\(label): got \\(reports.items)")
+        return false
     }
 
     /// A tree in the fixtures' form: a block is its id, a region is its index in the page's markup.
