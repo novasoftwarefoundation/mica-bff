@@ -283,7 +283,7 @@ defmodule MicaBff.Schema do
     pages = get.(:mica_bff_pages)
     external = Module.get_attribute(env.module, :mica_bff_external_types)
 
-    # One `seen` across blocks, regions and types: in Swift and Elixir all are types in one
+    # One `seen` across blocks, regions and types: in Swift, Kotlin and Elixir all are types in one
     # namespace.
     seen = validate_records!(blocks, "block", [:id], blocks, types, external, %{}, env.file)
 
@@ -434,7 +434,7 @@ defmodule MicaBff.Schema do
     end)
   end
 
-  # Clients name things in camelCase (`a_b` is `aB` in Swift), so two names that only
+  # Clients name things in camelCase (`a_b` is `aB` in Swift and Kotlin), so two names that only
   # differ in underscores would be one name there. `seen` maps client names to names.
   defp unique!(seen, name, fail, twice, clash) do
     [first | rest] = name |> Atom.to_string() |> String.split("_")
@@ -487,7 +487,7 @@ defmodule MicaBff.Schema do
   defp list_element({:list, element}), do: element
   defp list_element(type), do: type
 
-  # Values become wire strings and Swift cases; the fallback is what a client shows
+  # Values become wire strings and Swift cases or Kotlin entries; the fallback is what a client shows
   # for a value it doesn't know (ADR 0001).
   defp check_enum!(at, %{type: {:enum, values}} = field, fail) do
     unless is_list(values) and values != [],

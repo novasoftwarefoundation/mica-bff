@@ -1,0 +1,245 @@
+<%= @header %>
+
+package <%= @package %>
+
+/**
+ * The BFF's types. Decoding takes JSON that is already parsed into plain values: Map,
+ * List, String, Number, Boolean and null.
+ */
+object <%= @namespace %> {
+    /**
+     * One block on a BFF page. Decoding never throws: a type this app doesn't know
+     * becomes [UnknownBlock], and a known block always decodes, with the props it could read.
+     */
+    sealed interface Block {
+        companion object {
+            fun from(value: kotlin.Any?): Block {
+                val map = value as? kotlin.collections.Map<*, *> ?: return UnknownBlock("")
+                val type = map["type"] as? kotlin.String ?: return UnknownBlock("")
+                val props = map["props"]
+                return when (type) {
+<%= for block <- @blocks do %>                    "<%= block.name %>" -> <%= @namespace %>.<%= block.type %>.from(props) ?: <%= @namespace %>.<%= block.type %>()
+<% end %>                    else -> UnknownBlock(type)
+                }
+            }
+        }
+    }
+
+    /** A block of a type this app doesn't know. */
+    data class UnknownBlock(val type: kotlin.String) : Block
+
+    /** What a region is: one class per region kind, or [UnknownRegion]. */
+    sealed interface RegionKind
+
+    /** A region of a kind this app doesn't know. */
+    data class UnknownRegion(val kind: kotlin.String) : RegionKind
+
+    /**
+     * A region of a page's markup: it covers the blocks from the one with id `start` to
+     * the one with id `end`, both included.
+     */
+    data class Region(val start: kotlin.String, val end: kotlin.String, val kind: RegionKind) {
+        companion object {
+            /**
+             * Null without a string `start` and `end`, so a page drops the region; a kind
+             * this app doesn't know becomes [UnknownRegion].
+             */
+            fun from(value: kotlin.Any?): Region? {
+                val map = value as? kotlin.collections.Map<*, *> ?: return null
+                val start = map["start"] as? kotlin.String ?: return null
+                val end = map["end"] as? kotlin.String ?: return null
+                val props = map["props"]
+                val kind: RegionKind = when (val name = map["kind"] as? kotlin.String ?: "") {
+<%= for kind <- @regions do %>                    "<%= kind.name %>" -> <%= @namespace %>.<%= kind.type %>.from(props) ?: <%= @namespace %>.<%= kind.type %>()
+<% end %>                    else -> UnknownRegion(name)
+                }
+                return Region(start, end, kind)
+            }
+        }
+    }
+
+    /**
+     * A page in the nested form a client renders: a block with its id ([BlockNode]), or a
+     * region with what it covers ([RegionNode]).
+     */
+    sealed interface Node
+
+    data class BlockNode(val id: kotlin.String?, val block: Block) : Node
+
+    data class RegionNode(val region: Region, val children: kotlin.collections.List<Node>) : Node
+
+    /**
+     * A page as the BFF sends it: its blocks, each block's id (null when it has none) and
+     * its markup: the regions beside them.
+     */
+    data class Page(
+        val blocks: kotlin.collections.List<Block>,
+        val ids: kotlin.collections.List<kotlin.String?>,
+        val markup: kotlin.collections.List<Region>,
+    ) {
+        companion object {
+            /**
+             * How deep regions may nest (ADR 0001): `tree()` and the views after it recurse once
+             * per level, so a limit keeps deep markup from overflowing the stack.
+             */
+            const val MAX_REGION_DEPTH = <%= @max_region_depth %>
+
+            /**
+             * Never throws: a value that isn't an object, or one without a list of blocks, is
+             * a page without blocks; an id that isn't a string is none; a markup item that
+             * doesn't decode is dropped.
+             */
+            fun from(value: kotlin.Any?): Page {
+                val map = value as? kotlin.collections.Map<*, *>
+                val items = map?.get("blocks") as? kotlin.collections.List<*> ?: emptyList<kotlin.Any?>()
+                return Page(
+                    blocks = items.map { Block.from(it) },
+                    ids = items.map { (it as? kotlin.collections.Map<*, *>)?.get("id") as? kotlin.String },
+                    markup = (map?.get("markup") as? kotlin.collections.List<*>)?.mapNotNull { Region.from(it) } ?: emptyList(),
+                )
+            }
+        }
+
+        /**
+         * Why the markup doesn't hold, for the first region that doesn't, or null when it does:
+         * a region whose `start` or `end` is no block's id or an id two blocks have, one
+         * that ends before it starts, one that crosses a region before it, or one that would
+         * make regions nest deeper than [MAX_REGION_DEPTH]. Regions nest as in XML: two regions
+         * share no block, or one covers all of the other. Regions of a kind this app doesn't
+         * know are left out.
+         */
+        fun check(): kotlin.String? {
+            val positions = idPositions()
+            val kept = mutableListOf<Span>()
+            for (region in markup) {
+                if (region.kind is UnknownRegion) continue
+                keep(region, positions, kept)?.let { return it }
+            }
+            return null
+        }
+
+        /**
+         * The page as the nested tree to render, in page order. Regions over the same
+         * stretch nest in list order, the first outermost. A region of a kind this app
+         * doesn't know, or one that `check()` refuses, is left out, and its blocks still show.
+         */
+        fun tree(): kotlin.collections.List<Node> {
+            val positions = idPositions()
+            val kept = mutableListOf<Span>()
+            for (region in markup) {
+                if (region.kind !is UnknownRegion) keep(region, positions, kept)
+            }
+            // Outermost first: by start, the longest first, then in list order (the sort is stable).
+            val spans = kept.sortedWith(compareBy<Span>({ it.first }, { -it.last }))
+            var next = 0
+
+            // Recurses once per level of regions, so at most MAX_REGION_DEPTH deep.
+            fun nodes(from: kotlin.Int, to: kotlin.Int): kotlin.collections.List<Node> {
+                val result = mutableListOf<Node>()
+                var position = from
+                while (position < to) {
+                    if (next < spans.size && spans[next].first == position) {
+                        val span = spans[next]
+                        next += 1
+                        result.add(RegionNode(span.region, nodes(position, span.last + 1)))
+                        position = span.last + 1
+                    } else {
+                        result.add(BlockNode(ids.getOrNull(position), blocks[position]))
+                        position += 1
+                    }
+                }
+                return result
+            }
+            return nodes(0, blocks.size)
+        }
+
+        /** `depth`: how many regions this one is in, itself included. */
+        private class Span(val region: Region, val first: kotlin.Int, val last: kotlin.Int, var depth: kotlin.Int)
+
+        /** Where each id is on the page; -1 for an id two blocks have. */
+        private fun idPositions(): kotlin.collections.Map<kotlin.String, kotlin.Int> {
+            val positions = mutableMapOf<kotlin.String, kotlin.Int>()
+            for (position in 0 until minOf(ids.size, blocks.size)) {
+                val id = ids[position] ?: continue
+                positions[id] = if (id in positions) -1 else position
+            }
+            return positions
+        }
+
+        /** Why `id` at `position` can't be a region's boundary, or null when it can. */
+        private fun problem(id: kotlin.String, position: kotlin.Int?): kotlin.String? = when (position) {
+            null -> "\"$id\" is no block's id"
+            -1 -> "two blocks have id \"$id\""
+            else -> null
+        }
+
+        /**
+         * Adds `region` to `kept` when it nests with them and keeps every region within
+         * [MAX_REGION_DEPTH], or says why not. The regions around it set its depth; the ones it
+         * goes around get one deeper (one over the same stretch before it is around it).
+         */
+        private fun keep(
+            region: Region,
+            positions: kotlin.collections.Map<kotlin.String, kotlin.Int>,
+            kept: kotlin.collections.MutableList<Span>,
+        ): kotlin.String? {
+            val name = "region from \"${region.start}\" to \"${region.end}\""
+            val first = positions[region.start]
+            val last = positions[region.end]
+            (problem(region.start, first) ?: problem(region.end, last))?.let { return "$name: $it" }
+            if (first == null || last == null) return null
+            if (last < first) return "$name: it ends before it starts"
+            // ponytail: two passes over `kept` per region, quadratic in kept regions; an
+            // interval tree if a page ever sends thousands of side-by-side regions.
+            val crossed = kept.firstOrNull {
+                (it.first < first && first <= it.last && it.last < last) ||
+                    (first < it.first && it.first <= last && last < it.last)
+            }
+            if (crossed != null) {
+                return "$name crosses the region from \"${crossed.region.start}\" to \"${crossed.region.end}\""
+            }
+            var around = 0
+            var deepestInside = 0
+            for (span in kept) {
+                if (span.first <= first && last <= span.last) {
+                    around += 1
+                } else if (first <= span.first && span.last <= last) {
+                    deepestInside = maxOf(deepestInside, span.depth + 1)
+                }
+            }
+            val deepest = maxOf(around + 1, deepestInside)
+            if (deepest > MAX_REGION_DEPTH) {
+                return "$name: regions would nest $deepest deep, more than $MAX_REGION_DEPTH"
+            }
+            for (span in kept) {
+                if (first <= span.first && span.last <= last && (span.first != first || span.last != last)) {
+                    span.depth += 1
+                }
+            }
+            kept.add(Span(region, first, last, around + 1))
+            return null
+        }
+    }
+<%= for source <- @classes do %>
+<%= source %>
+<% end %>
+    private fun readString(value: kotlin.Any?): kotlin.String? = value as? kotlin.String
+
+    /** Any number without a fraction that fits: 3 and 3.0, not 1.5 or 2^63. */
+    private fun readLong(value: kotlin.Any?): kotlin.Long? = when (value) {
+        is kotlin.Long -> value
+        is kotlin.Number -> value.toLong().takeIf { it.toDouble() == value.toDouble() && value.toDouble() < 9.223372036854775808E18 }
+        else -> null
+    }
+
+    private fun readDouble(value: kotlin.Any?): kotlin.Double? = (value as? kotlin.Number)?.toDouble()
+
+    private fun readBoolean(value: kotlin.Any?): kotlin.Boolean? = value as? kotlin.Boolean
+
+    /**
+     * A list prop: an element that doesn't decode (another type, `null`) is dropped and
+     * the rest of the list stays (ADR 0001).
+     */
+    private inline fun <T : kotlin.Any> readList(value: kotlin.Any?, element: (kotlin.Any?) -> T?): kotlin.collections.List<T>? =
+        (value as? kotlin.collections.List<*>)?.mapNotNull(element)
+}

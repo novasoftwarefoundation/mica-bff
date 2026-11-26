@@ -1,30 +1,33 @@
 # mica-bff
 
-The spec for the Mica backend for frontend (BFF): the blocks the server sends and the clients render, and what turns the spec into code. An Elixir server (`mica`) defines the block modules at compile time with a macro; client code for `next-ios` is generated.
+The spec for the Mica backend for frontend (BFF): the blocks the server sends and the clients render, and what turns the spec into code. An Elixir server (`mica`) defines the block modules at compile time with a macro; client code for `next-ios` (Swift) and the Android app (Kotlin) is generated.
 
 - `lib/mica_bff/schema.ex`: the schema, written as a DSL (`defblock`, `deftype`, `defregion`, `field`, `defpage`, `param`)
 - `lib/mica_bff/types.ex`: the nested data types blocks hold, such as a filter's options
 - `lib/mica_bff/blocks.ex`: the block catalogue
 - `lib/mica_bff/regions.ex`: the region kinds that group a page's blocks
 - `lib/mica_bff/pages.ex`: the pages the BFF serves, with their query parameters
-- `lib/mica_bff/spec.ex`: the spec, types, blocks, region kinds and pages together; the Swift generator and the Elixir macro read its `__schema__/0`
+- `lib/mica_bff/spec.ex`: the spec, types, blocks, region kinds and pages together; the Swift and Kotlin generators and the Elixir macro read its `__schema__/0`
 - `lib/mica_bff/compat.ex`: what counts as a breaking change between two specs
 - `lib/mix/tasks/bff.compat.ex`: compares the spec with the last `v*` tag; CI fails on a breaking change
 - `lib/mica_bff/gen/elixir.ex`: the macro that defines the Elixir block, region and type modules and the rules for a page's regions
 - `lib/mix/tasks/bff.gen.swift.ex`: generates the Swift structs and the rules for a page's regions for next-ios
+- `lib/mix/tasks/bff.gen.kotlin.ex`: generates the Kotlin classes and the rules for a page's regions for the Android app
 - `fixtures/`: example payloads; generated code must encode and decode them exactly. `fixtures/pages/` are whole view models, `fixtures/rules/markup.json` the region rules every client checks.
 - `docs/adr/`: decisions, starting with [0001: spec format](docs/adr/0001-spec-format.md)
 
 Blocks travel as JSON: `{"id": "studies", "type": "section", "props": {"title": "...", "body": "...", "to": "/..."}}`; a type is a JSON object of its fields inside a prop. A page (`defpage :home`) is `GET /bff/page/home`, answered with its view model, `{"blocks": [...], "markup": [...]}`: the blocks, and its markup beside them, regions that group stretches of blocks by id (`{"kind": "border", "start": "rewards", "end": "pending", "props": {}}`) and nest as in XML. Its params are query parameters (`param :year, :integer` reads `?year=2025`). A filter is a link to the same page with the filter applied, which the app loads in place. The app sends the spec version it implements in the `x-bff-spec` header.
 
 ```sh
-mix test   # the Swift tests need swiftc; without it they are skipped locally, never in CI
+mix test   # the Swift tests need swiftc, the Kotlin tests kotlinc and a JDK; without the compiler they are skipped locally, never in CI
 mix run -e 'IO.inspect(MicaBff.Spec.__schema__())'
 
 # fails on a breaking change against the last v* tag (or --against TAG); without a tag it passes
 mix bff.compat
 # one file, BFF.swift: enum BFF.Block (one case per block + .unknown), BFF.Page with its markup and tree(), and a struct per block, region kind and type
 mix bff.gen.swift --out ../next-ios/Next/BFF
+# one file, BFF.kt: object BFF with sealed interface Block (one class per block + UnknownBlock), Page with its markup and tree(), and a class per block, region kind and type
+mix bff.gen.kotlin --out ../next-android/app/src/main/java/co/eyra/next/bff --package co.eyra.next.bff
 ```
 
 ## Using the spec from an Elixir app
@@ -56,3 +59,7 @@ To cut a release, set the version in `mix.exs` and tag that commit `vX.Y.Z` with
 After a green `main`, CI regenerates the code in next-ios (`Next/BFF`) only and opens or updates one PR there, on the branch `mica-bff/sync` against `develop`; its own CI checks it. A commit that only changes the header opens no PR. This needs a GitHub App installed on eyra with contents and pull requests write access to next-ios: its client ID as the variable `SYNC_APP_CLIENT_ID` and its private key as the secret `SYNC_APP_PRIVATE_KEY`. The job only asks for a token for next-ios, but until the App's installation is narrowed to next-ios, its private key can still write to mono as well. Without the variable the job is skipped.
 
 Views are hand-written in the app: switch over `BFF.Block` without `default:`, so a new block is a build error until it has a view. Every prop in the generated Swift is optional, also a required one (tolerant reader, ADR 0001): `required` binds the server, whose encoder raises on `nil`, and a view renders whatever a known block brings. A required prop that the app got without a value is reported through `BFF.reportMissing`, which logs an error to the unified log (subsystem `mica-bff`, category `decoding`); bind another reporter with `BFF.$reportMissing.withValue`.
+
+### Kotlin
+
+The generated Kotlin follows the same rules: `when` over `BFF.Block` without `else`, every prop nullable. It depends on nothing but the Kotlin standard library and doesn't parse JSON itself: `BFF.Page.from(value)` and `BFF.Block.from(value)` take JSON that is already parsed into plain values (`Map`, `List`, `String`, `Number`, `Boolean`, `null`) and never throw. An Android app parses with `org.json` and converts first: a `JSONObject` to a `Map` of its keys, a `JSONArray` to a `List`, `JSONObject.NULL` to `null`, each value converted the same way; strings, numbers and booleans pass as they are. An `integer` prop is a `Long`, a `float` a `Double`. It has no encoding to JSON and no missing-prop report. CI doesn't sync the Android app (`eyra/next-android`) yet, as the sync's GitHub App isn't installed there: run the task by hand.
