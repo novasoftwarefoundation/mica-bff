@@ -35,6 +35,10 @@ jobs:
           otp-version: ${{ matrix.otp }}
           elixir-version: ${{ matrix.elixir }}
           version-type: strict
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880
+        with:
+          distribution: temurin
+          java-version: "21.0.13+9"
       - name: Install Swift
         run: |
           archive=swiftly-1.2.0-x86_64.tar.gz
