@@ -14,6 +14,9 @@ defmodule MicaBff.Gen.Swift do
   - One struct per block, every prop a Swift optional: `required` binds the server
     only. A prop that is missing, `null` or doesn't decode (e.g. a changed type)
     becomes `nil`; props that aren't an object give the block with every prop `nil`.
+    A required prop that ends up `nil`, and a missing props object, go to
+    `reportMissing` (a `@TaskLocal` that logs to the unified log), so a server bug or
+    a changed type shows up without changing what the app renders.
   - An enum prop is a `String` enum nested in its block's struct, named after the
     field (`tone` is `Tone`); a value the app doesn't know decodes to the enum's
     fallback. A list prop is a Swift array; an element that doesn't decode is
@@ -199,6 +202,8 @@ defmodule MicaBff.Gen.Swift do
       key: key,
       swift_type: swift_type,
       decode: decode,
+      name: name,
+      required: Map.get(field, :required, false),
       enum: enum(field)
     }
   end
