@@ -228,6 +228,9 @@ object <%= @namespace %> {
     /** Any number without a fraction that fits: 3 and 3.0, not 1.5 or 2^63. */
     private fun readLong(value: kotlin.Any?): kotlin.Long? = when (value) {
         is kotlin.Long -> value
+        // Exact, where a Double near 2^63 would round.
+        is java.math.BigInteger -> value.takeIf { it.bitLength() < 64 }?.toLong()
+        is java.math.BigDecimal -> try { value.longValueExact() } catch (_: java.lang.ArithmeticException) { null }
         is kotlin.Number -> value.toLong().takeIf { it.toDouble() == value.toDouble() && value.toDouble() < 9.223372036854775808E18 }
         else -> null
     }

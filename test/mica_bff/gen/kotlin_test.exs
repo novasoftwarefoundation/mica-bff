@@ -465,6 +465,17 @@ defmodule MicaBff.Gen.KotlinTest do
         "BFF.RowItem()"
       ),
       expect(
+        "the largest Long as a BigInteger and as a BigDecimal",
+        ~s|listOf(BFF.RowItem.from(mapOf("count" to java.math.BigInteger(Long.MAX_VALUE.toString()))), | <>
+          ~s|BFF.RowItem.from(mapOf("count" to java.math.BigDecimal("9223372036854775807.0"))))|,
+        "listOf(BFF.RowItem(count = Long.MAX_VALUE), BFF.RowItem(count = Long.MAX_VALUE))"
+      ),
+      expect(
+        "a BigDecimal with a fraction for an integer",
+        ~s|BFF.RowItem.from(mapOf("count" to java.math.BigDecimal("3.5")))|,
+        "BFF.RowItem()"
+      ),
+      expect(
         "the smallest Long as a Double",
         ~s|BFF.RowItem.from(mapOf("count" to -9.223372036854775808E18))|,
         "BFF.RowItem(count = Long.MIN_VALUE)"
