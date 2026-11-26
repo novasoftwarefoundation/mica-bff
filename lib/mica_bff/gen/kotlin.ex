@@ -7,10 +7,11 @@ defmodule MicaBff.Gen.Kotlin do
   `#{@default_namespace}`; Compose already has a `Border`), in a package (default
   `#{@default_package}`). The Kotlin itself is in `kotlin.kt.eex`.
 
-  The file needs the Kotlin standard library only: no JSON library, nothing from
-  Android. Decoding takes JSON that is already parsed into plain values: `Map`,
-  `List`, `String`, `Number`, `Boolean` and `null`. An Android app turns `org.json`
-  into those; a test writes them as literals.
+  The file needs the Kotlin and Java standard libraries only (`java.math` for a
+  `BigInteger` or `BigDecimal`): no JSON library, nothing from Android. Decoding
+  takes JSON that is already parsed into plain values: `Map`, `List`, `String`,
+  `Number`, `Boolean` and `null`. An Android app turns `org.json` into those; a test
+  writes them as literals.
 
   - `sealed interface Block`: one class per block plus `UnknownBlock(type)`.
     `Block.from(value)` never throws: a type this app doesn't know becomes
@@ -21,7 +22,8 @@ defmodule MicaBff.Gen.Kotlin do
     type becomes `null`; props that aren't an object give the block with every prop
     `null`. A block without props is a plain class whose instances are all equal.
     An `integer` is a `Long`, read from any number without a fraction; a `float` is
-    a `Double`.
+    a `Double`. A data class's fields are in spec order, which the compatibility
+    rules may change: build one with named arguments and don't destructure it.
   - An enum prop is an `enum class` nested in its block's class, named after the
     field (`tone` is `Tone`), its entries in UPPER_SNAKE; a value the app doesn't know
     decodes to the enum's fallback. A list prop is a `List`; an element that doesn't
