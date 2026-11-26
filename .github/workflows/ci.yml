@@ -49,6 +49,14 @@ jobs:
           fi
           echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
       - run: swiftc --version
+      - name: Install Kotlin
+        run: |
+          archive=kotlin-compiler-2.4.21.zip
+          curl -fsSLO "https://github.com/JetBrains/kotlin/releases/download/v2.4.21/$archive"
+          echo "7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e75cd  $archive" | sha256sum -c -
+          unzip -q "$archive" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/kotlinc/bin" >> "$GITHUB_PATH"
+      - run: kotlinc -version
       - run: mix compile --warnings-as-errors
       - run: mix format --check-formatted
       - run: mix test
